@@ -120,7 +120,7 @@ cargo run -p agora-server --release
 
 打開 <http://127.0.0.1:4717/>。想先不花任何額度看看介面，可以加 `-- --demo`，會多出兩個離線模擬模型。
 
-**桌面版 exe**：
+**桌面版**：不想自己編譯的話，到 [Releases](https://github.com/cdexswzaq0110/Agora/releases) 下載 `Agora_<版本>_x64-setup.exe` 安裝（沒有程式碼簽章，Windows 會跳出 SmartScreen：「其他資訊」→「仍要執行」）。自己編譯：
 
 ```bash
 cargo build -p agora-desktop --release
