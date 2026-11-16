@@ -3,7 +3,7 @@
 import { $, $$, api, esc, pad2, rel, store, toast } from './util.js';
 import { GRADE } from './md.js';
 import {
-  S, MODES, MODE_ORDER, STATUS_ZH, FAMILY, saveComposer, providerById, famOf, pickProvider, ensureCast,
+  S, MODES, MODE_ORDER, STATUS_ZH, FAMILY, saveComposer, providerById, famOf, pickProvider, ensureCast, effortsFor, effortOptions,
   providerOptions, modelOptions, chip,
 } from './state.js';
 import { voiceButton, bindVoice } from './voice.js';
@@ -38,6 +38,7 @@ function castHtml() {
       <div class="slot-head"><span class="slot-role">${esc(slotRoles(mode, i))}</span>${removable ? `<button class="slot-x" type="button" data-remove="${i}" aria-label="移除${esc(slotRoles(mode, i))}">✕</button>` : ''}</div>
       <label class="field"><span>模型提供者</span><select data-prov="${i}">${providerOptions(s.provider)}</select></label>
       <label class="field"><span>模型</span><select data-model="${i}">${modelOptions(s.provider, s.model)}</select></label>
+      <label class="field"><span>推理強度</span><select data-effort="${i}"${effortsFor(s.provider, s.model).list.length ? '' : ' disabled'}>${effortOptions(s.provider, s.model, s.effort)}</select></label>
     </div>`;
   }).join('');
   if (multi && slots.length < 4) html += `<button class="add-slot" type="button" id="addSlot">＋ 新增${mode === 'workshop' ? '提案者' : '與談人'}</button>`;
@@ -125,7 +126,7 @@ export function flowSummary() {
   const m = S.c.mode;
   const cast = S.c.cast[m];
   const r = Number(S.c.rounds[m] ?? 1);
-  const names = cast.map((s) => who(s.provider));
+  const names = cast.map((s) => who(s.provider) + (s.effort ? `（推理 ${s.effort}）` : ''));
   let flow;
   const compare = S.c.compare || [];
   if (compare.length >= 2) {
@@ -166,7 +167,8 @@ function paintSummary() {
   el.innerHTML = `<span class="flow">${esc(flow)}</span>${tags.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}`;
   const hint = $('#budgetHint');
   const n = (S.c.compare || []).length;
-  if (hint) hint.textContent = n >= 2 ? `比較 ${n} 種模式，依序執行` : `最多 ${budgetEstimate()} 次模型呼叫`;
+  const heavy = (S.c.cast[S.c.mode] || []).some((s) => ['high', 'xhigh', 'max', 'ultra'].includes(s.effort));
+  if (hint) hint.textContent = (n >= 2 ? `比較 ${n} 種模式，依序執行` : `最多 ${budgetEstimate()} 次模型呼叫`) + (heavy ? ' · 推理強度較高，token 會比較多' : '');
 }
 
 // ------------------------------------------------------------------ status, archive
@@ -411,8 +413,21 @@ function bindHome() {
   $('#cast').addEventListener('change', (e) => {
     const slots = S.c.cast[S.c.mode];
     const t = e.target;
-    if (t.dataset.prov !== undefined) { const s = slots[Number(t.dataset.prov)]; s.provider = t.value; s.model = ''; refreshComposer(); return; }
-    if (t.dataset.model !== undefined) { slots[Number(t.dataset.model)].model = t.value; saveComposer(); return; }
+    if (t.dataset.prov !== undefined) { const s = slots[Number(t.dataset.prov)]; s.provider = t.value; s.model = ''; s.effort = ''; refreshComposer(); return; }
+    if (t.dataset.model !== undefined) {
+      const i = Number(t.dataset.model);
+      const s = slots[i];
+      s.model = t.value;
+      // Keep the effort only while the new model still lists it.
+      const { list } = effortsFor(s.provider, s.model);
+      if (s.effort && !list.includes(s.effort)) { s.effort = ''; toast('這個模型不支援原本的推理強度，已改回模型預設'); }
+      const es = view().querySelector(`[data-effort="${i}"]`);
+      if (es) { es.innerHTML = effortOptions(s.provider, s.model, s.effort); es.disabled = !list.length; }
+      paintSummary();
+      saveComposer();
+      return;
+    }
+    if (t.dataset.effort !== undefined) { slots[Number(t.dataset.effort)].effort = t.value; paintSummary(); saveComposer(); return; }
     if (t.id === 'judgeSel') S.c.judge[S.c.mode] = t.value;
     if (t.id === 'builderSel') S.c.builder = t.value;
     if (t.id === 'reviewerSel') S.c.reviewer = t.value;
@@ -479,7 +494,7 @@ export function buildSpec() {
   return {
     project_id: S.projectId,
     mode,
-    participants: S.c.cast[mode].map((s) => ({ provider: s.provider, model: s.model || null })),
+    participants: S.c.cast[mode].map((s) => ({ provider: s.provider, model: s.model || null, effort: s.effort || null })),
     judge: ['roundtable', 'debate', 'workshop'].includes(mode) ? one(S.c.judge[mode]) : null,
     builder: mode === 'workshop' ? one(S.c.builder) : null,
     reviewer: mode === 'workshop' ? one(S.c.reviewer) : null,

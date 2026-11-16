@@ -235,6 +235,7 @@ mod tests {
                 grade: EvidenceGrade::Inferred,
                 summary: "採用 Postgres".into(),
                 open_issues: vec!["負載測試".into()],
+                memory_hint: None,
             }),
             error: None,
             plan: None,

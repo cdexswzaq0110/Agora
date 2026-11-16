@@ -32,8 +32,9 @@ export async function renderSession(id) {
   S.diff = null;
   S.planEdit = null;
   S.phaseOpen = new Map(); // round → open, only where the user overrode the default
-  S.gateUi = { reviseOpen: false, reviseText: '', verify: null };
+  S.gateUi = { reviseOpen: false, reviseText: '', verify: null, comments: [] };
   S.planTab = 'preview';
+  S.memLine = null;
   view().innerHTML = `<div id="sHead" class="session-head"><a class="back" href="#/">← 議題</a><h1 id="sTitle" tabindex="-1">載入中…</h1></div>
     <div id="sSticky" class="session-sticky" hidden aria-hidden="true"></div>
     <div id="sStepper"></div>
@@ -78,7 +79,12 @@ function openStream(id) {
 
 // ------------------------------------------------------------------ scheduling
 
-let paintQueued = false;
+// One queued frame serves both kinds of request. A full repaint asked for while a turn-only
+// repaint is already queued *upgrades* that frame — it is never dropped. (Before v0.4 both
+// shared one boolean, so the last delta's turn-only frame swallowed the `plan`/`phase`/`status`
+// repaint that followed in the same frame: the approval gate stayed empty — lessons/0012.)
+let frameQueued = false;
+let fullPending = false;
 const dirtyTurns = new Set();
 // requestAnimationFrame does not fire while the page is hidden (background tab, minimized
 // desktop window); a timer fallback guarantees the view still catches up (lessons/0005).
@@ -88,30 +94,38 @@ function nextFrame(fn) {
   requestAnimationFrame(run);
   setTimeout(run, 250);
 }
+function flushFrame() {
+  frameQueued = false;
+  if (fullPending) {
+    fullPending = false;
+    dirtyTurns.clear();
+    paintSession();
+    return;
+  }
+  const stick = nearBottom();
+  for (const i of dirtyTurns) {
+    const el = document.getElementById(`turn-${i}`);
+    const t = S.rec?.turns[i];
+    if (el && t) {
+      el.outerHTML = turnHtml(t);
+      const mini = document.getElementById(`mini-${i}`);
+      if (mini) mini.outerHTML = miniHtml(t);
+    } else { dirtyTurns.clear(); paintSession(); return; }
+  }
+  dirtyTurns.clear();
+  if (stick) window.scrollTo({ top: document.body.scrollHeight });
+}
 function schedulePaint() {
-  if (paintQueued) return;
-  paintQueued = true;
-  nextFrame(() => { paintQueued = false; dirtyTurns.clear(); paintSession(); });
+  fullPending = true;
+  if (frameQueued) return;
+  frameQueued = true;
+  nextFrame(flushFrame);
 }
 function scheduleTurn(idx) {
   dirtyTurns.add(idx);
-  if (paintQueued) return;
-  paintQueued = true;
-  nextFrame(() => {
-    paintQueued = false;
-    const stick = nearBottom();
-    for (const i of dirtyTurns) {
-      const el = document.getElementById(`turn-${i}`);
-      const t = S.rec?.turns[i];
-      if (el && t) {
-        el.outerHTML = turnHtml(t);
-        const mini = document.getElementById(`mini-${i}`);
-        if (mini) mini.outerHTML = miniHtml(t);
-      } else { dirtyTurns.clear(); paintSession(); return; }
-    }
-    dirtyTurns.clear();
-    if (stick) window.scrollTo({ top: document.body.scrollHeight });
-  });
+  if (frameQueued) return;
+  frameQueued = true;
+  nextFrame(flushFrame);
 }
 const nearBottom = () => window.innerHeight + window.scrollY >= document.body.scrollHeight - 160;
 
@@ -197,7 +211,7 @@ function turnHtml(t) {
   const wide = ['synthesizer', 'builder', 'reviewer', 'solo'].includes(t.role) || (t.role === 'judge' && S.rec.turns.filter((x) => x.role === 'judge').length === 1);
   const canFork = !running && t.ok && !live(S.rec);
   return `<article class="turn fam-${t.family}${collapsed ? ' collapsed' : ''}${wide ? ' wide' : ''}${t.seeded ? ' seeded' : ''}" id="turn-${t.index}">
-    <header><span class="who">${esc(FAMILY[t.family] || t.family)}</span><span class="role">${esc(ROLE_ZH[t.role] || t.role)}</span>${t.model ? `<span class="model">${esc(t.model)}</span>` : ''}<span class="state">${state}</span>
+    <header><span class="who">${esc(FAMILY[t.family] || t.family)}</span><span class="role">${esc(ROLE_ZH[t.role] || t.role)}</span>${t.model ? `<span class="model">${esc(t.model)}</span>` : ''}${t.effort ? `<span class="model" title="推理強度">推理 ${esc(t.effort)}</span>` : ''}<span class="state">${state}</span>
       ${canFork ? `<button class="fork" type="button" data-fork="${t.index}" title="從這則之後分岔出新議題">分岔 ↗</button>` : ''}</header>
     ${tools}
     <div class="body md${running ? ' cursor' : ''}">${t.text ? md(t.text) : running ? '<p class="muted">等待模型回應…</p>' : ''}</div>
@@ -265,6 +279,66 @@ function suggestedVerify(planText) {
   return code ? code[1].trim() : '';
 }
 
+// ------------------------------------------------------------------ section comments (F)
+
+const MAX_COMMENTS = 20;
+const normHead = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+/** Comments written against an older revision are sent as plain feedback, never re-anchored. */
+const isStale = (c, p) => c.revision !== p.revision;
+
+function commentsHtml(p) {
+  const list = S.gateUi.comments;
+  if (!list.length) return '';
+  return `<div class="comment-list"><p class="field-label">段落留言（${list.length}）</p><ul>${list.map((c, k) => `<li${isStale(c, p) ? ' class="stale"' : ''}>
+      <b>${esc(c.heading)}</b>${isStale(c, p) ? '<span class="stale-note">原段落已變更，會當成一般意見送出</span>' : ''}
+      <span class="comment-text">${esc(c.text)}</span>
+      <button class="link" type="button" data-del-comment="${k}" aria-label="刪除對「${esc(c.heading)}」的留言">刪除</button></li>`).join('')}</ul></div>`;
+}
+
+/**
+ * Put one 「對這段留言」 button after each rendered h2/h3 that matches the server's section
+ * list (same level, same normalized text, in order). A heading that does not match gets no
+ * button — never a comment anchored to the wrong section.
+ */
+function decorateComments(r) {
+  const prev = $('#sGate .plan-preview');
+  const p = r.plan;
+  if (!prev || !p || prev.dataset.decorated || S.planEdit != null) return;
+  prev.dataset.decorated = '1';
+  const blocks = p.blocks || [];
+  let j = 0;
+  for (const h of $$('h2, h3', prev)) {
+    const level = Number(h.tagName[1]);
+    const k = blocks.findIndex((b, idx) => idx >= j && b.level === level && normHead(b.heading) === normHead(h.textContent));
+    if (k < 0) continue;
+    j = k + 1;
+    const b = blocks[k];
+    const full = S.gateUi.comments.length >= MAX_COMMENTS;
+    h.insertAdjacentHTML('beforeend', ` <button class="comment-btn" type="button" data-comment="${esc(b.id)}"${full ? ' disabled' : ''} aria-label="對「${esc(b.heading)}」這段留言">留言</button>`);
+  }
+}
+
+/** First ~200 characters after a heading, as context for the synthesizer. */
+function sectionQuote(h) {
+  let text = '';
+  for (let el = h.nextElementSibling; el && !/^H[1-4]$/.test(el.tagName) && text.length < 200; el = el.nextElementSibling) {
+    if (!el.classList.contains('comment-editor')) text += ` ${el.textContent}`;
+  }
+  return text.replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
+function openCommentEditor(btn) {
+  const h = btn.closest('h2, h3');
+  if (!h || h.nextElementSibling?.classList.contains('comment-editor')) return;
+  const id = btn.dataset.comment;
+  h.insertAdjacentHTML('afterend', `<div class="comment-editor" data-for="${esc(id)}">
+      <label class="field"><span>對這段的意見</span><textarea maxlength="1000" placeholder="例如：這一步太大，拆成兩步"></textarea></label>
+      <div class="toolbar"><button class="btn small primary" type="button" data-add-comment="${esc(id)}">加入留言</button><button class="btn small quiet" type="button" data-cancel-comment="1">取消</button></div>
+    </div>`);
+  h.nextElementSibling.querySelector('textarea').focus();
+}
+
 /** Approval gate: one document scroll, sticky decision column (desktop), ARIA tabs. */
 function gateHtml(r) {
   const p = r.plan;
@@ -289,13 +363,14 @@ function gateHtml(r) {
       <aside class="plan-actions" id="planActions" aria-label="核准決定">
         ${r.spec.plan_only ? '<p class="hint">這個議題只產出方案；核准後就結束，不會實作。</p>' : `<label class="field"><span>驗證指令</span><input type="text" id="planVerify" value="${esc(S.gateUi.verify ?? verify)}" placeholder="${esc(suggested ? `方案建議：${suggested}` : '例如 cargo test')}"><small>強烈建議：有它才可能得到「已確認」</small></label>`}
         <button class="btn primary block" type="button" id="approveBtn">${r.spec.plan_only ? '核准方案' : '核准並開始實作 ↗'}</button>
-        <button class="btn block" type="button" id="reviseToggle" aria-expanded="${S.gateUi.reviseOpen}" aria-controls="reviseBox"${p.revision >= 2 ? ' disabled title="已達修訂上限（2 次）"' : ''}>要求修訂${p.revision >= 2 ? '（已達上限）' : ''}</button>
+        ${commentsHtml(p)}
+        <button class="btn block" type="button" id="reviseToggle" aria-expanded="${S.gateUi.reviseOpen}" aria-controls="reviseBox"${p.revision >= 2 ? ' disabled title="已達修訂上限（2 次）"' : ''}>要求修訂${p.revision >= 2 ? '（已達上限）' : S.gateUi.comments.length ? `（含 ${S.gateUi.comments.length} 則留言）` : ''}</button>
         <div id="reviseBox" class="revise-box"${S.gateUi.reviseOpen ? '' : ' hidden'}>
           <label class="field"><span>要怎麼改？</span><textarea id="reviseText" placeholder="例如：步驟 3 太大，拆成兩步；不要動到 API 介面">${esc(S.gateUi.reviseText)}</textarea></label>
           <div class="toolbar">${voiceButton('reviseText')}<button class="btn small" type="button" id="reviseBtn">送出修訂要求</button></div>
         </div>
         <button class="btn quiet block" type="button" id="rejectBtn">只保留方案，不實作</button>
-        <p class="hint">${S.planEdit != null && S.planEdit !== p.text ? '你改過方案：核准時會用你改過的版本。' : '可以切到「編輯」直接改方案文字。'}</p>
+        <p class="hint">${S.planEdit != null && S.planEdit !== p.text ? '你改過方案：核准時會用你改過的版本。' : '可以切到「編輯」直接改方案文字，或在預覽裡「對這段留言」。'}</p>
       </aside>
     </div>
   </section>`;
@@ -339,7 +414,23 @@ function diffHtml(d) {
     <ul class="diff-files">${files}</ul><details open><summary class="muted">逐行差異</summary><pre class="patch">${lines}</pre></details></div>`;
 }
 
-function verdictHtml(v) {
+function memoryDefault(r) {
+  const v = r.verdict;
+  return v.memory_hint || `${r.title}（${MODES[r.spec.mode].zh}）：${v.headline}`;
+}
+
+function memoryHtml(r) {
+  const v = r.verdict;
+  if (!v || live(r)) return '';
+  const line = S.memLine ?? memoryDefault(r);
+  return `<div class="memory-suggest">
+      <label class="field"><span>存入專案記憶${v.memory_hint ? '（模型建議，可修改）' : ''}</span><input type="text" id="memLine" maxlength="300" value="${esc(line)}"></label>
+      <button class="btn small" type="button" id="rememberBtn">存入專案記憶</button>
+      <p class="muted mem-preview" id="memPreview">會寫入：- [${esc(stamp(r.created_at).slice(0, 10))}] ${esc(line)}【${esc(GRADE[v.grade].zh)}】</p>
+    </div>`;
+}
+
+function verdictHtml(v, r) {
   if (!v) return '';
   return `<section class="verdict" aria-label="結論">
       <div class="top"><span class="eyebrow">Verdict · 結論</span><span class="grade ${GRADE[v.grade].cls}" title="${esc(GRADE[v.grade].tip)}">證據等級 · ${GRADE[v.grade].zh}</span></div>
@@ -347,6 +438,7 @@ function verdictHtml(v) {
       ${v.summary ? `<div class="md">${md(v.summary)}</div>` : ''}
       ${v.open_issues.length ? `<div><p class="eyebrow" style="margin-bottom:.4rem">${{ synthesized: '待驗證事項', judged: '待驗證事項', split: '待驗證事項', planned: '驗收標準' }[v.outcome] || '未解決的問題'}</p><ul>${v.open_issues.map((x) => `<li>${inline(x)}</li>`).join('')}</ul></div>` : ''}
       <p class="explain">「${GRADE[v.grade].zh}」：${esc(GRADE[v.grade].tip)}。${v.grade === 'confirmed' ? '' : '要升到「已確認」，需要實際執行驗證指令並通過。'}</p>
+      ${r ? memoryHtml(r) : ''}
     </section>`;
 }
 
@@ -419,7 +511,6 @@ function headHtml(r, isLive) {
       <span class="status-pill" id="sStatus" tabindex="-1"><span class="dot ${isLive ? 'live' : r.status === 'done' ? 'ok' : 'bad'}"></span>${esc(status)}</span>
       <div class="chips">${r.spec.participants.map(chip).join('')}</div><span class="spacer"></span>
       ${isLive ? '<button class="btn danger small" type="button" id="cancelBtn">停止</button>' : ''}
-      ${done && r.verdict ? '<button class="btn small" type="button" id="rememberBtn">存入專案記憶</button>' : ''}
       <details class="more-menu"><summary class="btn small quiet" id="moreBtn">更多 ▾</summary><div class="menu">
         ${done && r.verdict ? '<button type="button" id="copyBtn">複製結論</button>' : ''}
         <a href="/api/sessions/${esc(r.id)}/export.md" download>下載 Markdown</a>
@@ -464,7 +555,7 @@ export function paintSession() {
   if (!r) return;
   const stick = nearBottom() && r.status === 'running';
   const isLive = live(r);
-  if (r.status !== 'awaiting_approval') { S.planEdit = null; S.planTab = 'preview'; S.gateUi = { reviseOpen: false, reviseText: '', verify: null }; }
+  if (r.status !== 'awaiting_approval') { S.planEdit = null; S.planTab = 'preview'; S.gateUi = { reviseOpen: false, reviseText: '', verify: null, comments: [] }; }
 
   swap($('#sHead'), headHtml(r, isLive));
   swap($('#sSticky'), stickyHtml(r, isLive));
@@ -472,7 +563,8 @@ export function paintSession() {
   // Never rewrite the gate under the user's cursor while it is still waiting for them.
   const gate = $('#sGate');
   if (!(r.status === 'awaiting_approval' && gate._html && gate.contains(document.activeElement))) swap(gate, gateHtml(r));
-  swap($('#sVerdict'), verdictHtml(r.verdict));
+  decorateComments(r);
+  swap($('#sVerdict'), verdictHtml(r.verdict, r));
   swap($('#sWorkspace'), workspaceHtml(r));
   swap($('#sPlanBox'), planBoxHtml(r));
   swap($('#sTools'), r.turns.length > 1 ? `<span class="eyebrow">Discussion · 討論過程</span><span class="spacer"></span><button class="btn small quiet" type="button" data-fold="open">展開所有輪次</button><button class="btn small quiet" type="button" data-fold="close">收合所有輪次</button>` : '');
@@ -550,6 +642,7 @@ function openPhase(round) {
 function repaintGate(r) {
   const gate = $('#sGate');
   gate.innerHTML = gate._html = gateHtml(r);
+  decorateComments(r);
   bindSession();
 }
 
@@ -558,9 +651,17 @@ function bindSession() {
   const id = r.id;
   const on = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
   on('#cancelBtn', async () => { if (!confirm('停止這個議題？進行中的 CLI 會被終止。')) return; try { await api(`/api/sessions/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: {} }); } catch (e) { toast(e.message, true); } });
+  const mem = $('#memLine');
+  if (mem) mem.oninput = () => {
+    S.memLine = mem.value;
+    const pv = $('#memPreview');
+    if (pv) pv.textContent = `會寫入：- [${stamp(r.created_at).slice(0, 10)}] ${mem.value.replace(/\s+/g, ' ').trim()}【${GRADE[r.verdict.grade].zh}】`;
+  };
   on('#rememberBtn', async () => {
+    const line = ($('#memLine')?.value || '').replace(/\s+/g, ' ').trim();
+    if (!line) { toast('要存入的句子是空的', true); $('#memLine')?.focus(); return; }
     try {
-      const p = await api(`/api/sessions/${encodeURIComponent(id)}/remember`, { method: 'POST', body: {} });
+      const p = await api(`/api/sessions/${encodeURIComponent(id)}/remember`, { method: 'POST', body: { line } });
       S.projects = S.projects.map((x) => (x.id === p.id ? p : x));
       toast('已加入專案記憶，之後的議題都會帶入');
     } catch (e) { toast(e.message, true); }
@@ -573,7 +674,7 @@ function bindSession() {
   on('#reuseBtn', () => {
     const s = r.spec;
     S.c.mode = s.mode;
-    S.c.cast[s.mode] = s.participants.map((p) => ({ provider: p.provider, model: p.model || '' }));
+    S.c.cast[s.mode] = s.participants.map((p) => ({ provider: p.provider, model: p.model || '', effort: p.effort || '' }));
     if (['roundtable', 'debate', 'workshop'].includes(s.mode)) S.c.judge[s.mode] = s.judge ? s.judge.provider : '';
     if (s.rounds != null && s.mode !== 'solo') S.c.rounds[s.mode] = s.rounds;
     Object.assign(S.c, { access: s.access, verify: s.verify_command || '', prompt: s.prompt, blind: s.blind, redTeam: s.red_team, planOnly: s.plan_only, autoApprove: false, seed: null });
@@ -620,6 +721,8 @@ function bindSession() {
   const rt = $('#reviseText');
   if (rt) rt.oninput = () => { S.gateUi.reviseText = rt.value; };
   on('#approveBtn', async () => {
+    const n = S.gateUi.comments.length;
+    if (n && !confirm(`你有 ${n} 則段落留言還沒送出。核准會忽略這些留言，確定要核准嗎？`)) return;
     const ta = $('#planText');
     const plan = ta ? ta.value : S.planEdit;
     const verify = $('#planVerify')?.value ?? null;
@@ -630,6 +733,40 @@ function bindSession() {
       toast(r.spec.plan_only ? '方案已核准' : '已核准，開始在隔離工作區實作');
     } catch (e) { toast(e.message, true); }
   });
+  const gateEl = $('#sGate');
+  if (gateEl) gateEl.onclick = (e) => {
+    const c = e.target.closest('[data-comment]');
+    if (c) { openCommentEditor(c); return; }
+    const cancel = e.target.closest('[data-cancel-comment]');
+    if (cancel) {
+      const ed = cancel.closest('.comment-editor');
+      const btn = ed?.previousElementSibling?.querySelector('[data-comment]');
+      ed?.remove();
+      btn?.focus();
+      return;
+    }
+    const add = e.target.closest('[data-add-comment]');
+    if (add) {
+      const ed = add.closest('.comment-editor');
+      const text = ed.querySelector('textarea').value.trim();
+      if (!text) { ed.querySelector('textarea').focus(); return; }
+      const b = (r.plan.blocks || []).find((x) => x.id === add.dataset.addComment);
+      if (!b || S.gateUi.comments.length >= MAX_COMMENTS) return;
+      const h = ed.previousElementSibling;
+      S.gateUi.comments.push({ block_id: b.id, heading: b.heading, quote: sectionQuote(h), text, revision: r.plan.revision });
+      S.gateUi.reviseOpen = true;
+      repaintGate(r);
+      announce(`已加入對「${b.heading}」的留言，共 ${S.gateUi.comments.length} 則`, `comment-${S.gateUi.comments.length}`);
+      $(`#sGate [data-comment="${CSS.escape(b.id)}"]`)?.focus();
+      return;
+    }
+    const del = e.target.closest('[data-del-comment]');
+    if (del) {
+      S.gateUi.comments.splice(Number(del.dataset.delComment), 1);
+      repaintGate(r);
+      $('#reviseToggle')?.focus();
+    }
+  };
   on('#reviseToggle', (e) => {
     const b = $('#reviseBox');
     b.hidden = !b.hidden;
@@ -638,10 +775,15 @@ function bindSession() {
     if (!b.hidden) $('#reviseText').focus();
   });
   on('#reviseBtn', async () => {
-    const feedback = $('#reviseText').value.trim();
-    if (!feedback) return;
+    const p = r.plan;
+    const stale = S.gateUi.comments.filter((c) => isStale(c, p));
+    const fresh = S.gateUi.comments.filter((c) => !isStale(c, p));
+    const feedback = [$('#reviseText').value.trim(), ...stale.map((c) => `「${c.heading}」（原段落已變更）：${c.text}`)].filter(Boolean).join('\n');
+    if (!feedback && !fresh.length) { toast('請寫下要怎麼改，或在方案裡對段落留言', true); $('#reviseText').focus(); return; }
+    const comments = fresh.map(({ block_id, heading, quote, text }) => ({ block_id, heading, quote, text }));
     try {
-      await api(`/api/sessions/${encodeURIComponent(id)}/decide`, { method: 'POST', body: { action: 'revise', feedback } });
+      await api(`/api/sessions/${encodeURIComponent(id)}/decide`, { method: 'POST', body: { action: 'revise', feedback, comments, plan_revision: p.revision } });
+      S.gateUi.comments = [];
       S.pendingFocus = true;
       toast('已送出，總結者正在修訂');
     } catch (e) { toast(e.message, true); }

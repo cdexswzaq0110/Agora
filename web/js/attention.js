@@ -111,3 +111,30 @@ export function scheduleAttention() {
 
 // Relative times ("3 分鐘前") would freeze otherwise.
 setInterval(paintRow, 60000);
+
+// ------------------------------------------------------------------ 情報未讀點
+// One read cursor shared by every device (server-side), so the dot clears everywhere.
+let digestGen = 0;
+
+export function renderDigestDot(state) {
+  const link = document.querySelector('.nav a[data-nav="digest"]');
+  if (!link) return;
+  let dot = link.querySelector('.new-dot');
+  if (state?.unread && !dot) {
+    dot = document.createElement('span');
+    dot.className = 'new-dot';
+    dot.setAttribute('aria-hidden', 'true');
+    link.appendChild(dot);
+  }
+  if (!state?.unread && dot) dot.remove();
+  if (state?.unread) link.setAttribute('aria-label', '情報，有新的技術情報');
+  else link.removeAttribute('aria-label');
+}
+
+export async function refreshDigestState() {
+  const mine = ++digestGen;
+  try {
+    const st = await api('/api/digests/state');
+    if (mine === digestGen) { S.digestState = st; renderDigestDot(st); }
+  } catch { /* offline: keep the last state */ }
+}

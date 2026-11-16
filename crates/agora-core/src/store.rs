@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::digest::{Digest, DigestSettings};
-use crate::model::{new_id, now_ms, Project, SessionRecord};
+use crate::model::{new_id, now_ms, Effort, Project, SessionRecord};
 use crate::quota::QuotaSnapshot;
 use crate::scheduler::Schedule;
 use crate::templates::Template;
@@ -43,6 +43,9 @@ pub struct Settings {
     pub codex_path: Option<String>,
     /// provider id → model id used when a participant leaves the model empty.
     pub default_models: BTreeMap<String, String>,
+    /// provider id → reasoning effort used when a participant leaves effort empty. Applied only
+    /// when the turn's model accepts it (see runner); never sent to a model that rejects it.
+    pub default_efforts: BTreeMap<String, Effort>,
     /// provider id → models the CLI rejected for this account.
     pub unsupported_models: BTreeMap<String, Vec<String>>,
     /// Refuse new turns when any quota window is at/above this percentage.
@@ -75,6 +78,7 @@ impl Default for Settings {
             claude_path: None,
             codex_path: None,
             default_models: BTreeMap::new(),
+            default_efforts: BTreeMap::new(),
             unsupported_models: BTreeMap::new(),
             quota_stop_percent: 97.0,
             demo_mode: false,
@@ -231,6 +235,36 @@ impl Store {
         }
         let _g = self.write_lock.lock().unwrap();
         write_atomic(&self.root.join("digests").join(format!("{}.json", d.date)), &serde_json::to_vec_pretty(d)?)
+    }
+
+    /// 情報已讀游標：date → `generated_at` of the version that was opened. One cursor shared by
+    /// every device (the same user reading on the phone has read it).
+    pub fn digest_reads(&self) -> BTreeMap<String, u64> {
+        fs::read_to_string(self.root.join("digest-read.json")).ok().and_then(|r| serde_json::from_str(&r).ok()).unwrap_or_default()
+    }
+
+    /// Mark `date` read at `generated_at`. The version must be the one stored right now (no
+    /// forged or future cursor) and the cursor only moves forward. Shares the write lock with
+    /// `save_digest`, so a regeneration and a read cannot interleave.
+    pub fn mark_digest_read(&self, date: &str, generated_at: u64) -> Result<()> {
+        if !valid_date(date) {
+            bail!("無效的日期");
+        }
+        let _g = self.write_lock.lock().unwrap();
+        let Some(d) = self.load_digest(date) else {
+            bail!("找不到這一天的情報");
+        };
+        if d.generated_at != generated_at {
+            bail!("情報已經重新整理過，請重新載入後再標記已讀");
+        }
+        let mut m = self.digest_reads();
+        let cur = m.get(date).copied().unwrap_or(0);
+        m.insert(date.to_string(), cur.max(generated_at));
+        while m.len() > 90 {
+            let oldest = m.keys().next().cloned().unwrap_or_default();
+            m.remove(&oldest);
+        }
+        write_atomic(&self.root.join("digest-read.json"), &serde_json::to_vec_pretty(&m)?)
     }
 
     pub fn load_digest(&self, date: &str) -> Option<Digest> {

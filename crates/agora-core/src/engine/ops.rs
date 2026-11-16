@@ -13,6 +13,53 @@ use tokio_util::sync::CancellationToken;
 
 use super::runner::{RunCtl, Runner};
 use super::{Engine, GateDecision};
+
+pub const MAX_PLAN_COMMENTS: usize = 20;
+
+/// Section comments are user data headed into a prompt: bounded, anchored to a section of the
+/// *current* revision, and free of control characters (newlines and tabs are fine).
+pub fn validate_revision(plan: &Plan, feedback: &str, comments: &[PlanComment], plan_revision: Option<u32>) -> Result<()> {
+    if feedback.trim().is_empty() && comments.iter().all(|c| c.text.trim().is_empty()) {
+        bail!("請寫下修改意見，或至少一則段落留言");
+    }
+    if feedback.chars().count() > 4000 {
+        bail!("修改意見太長（上限 4,000 字）");
+    }
+    if comments.is_empty() {
+        return Ok(());
+    }
+    if comments.len() > MAX_PLAN_COMMENTS {
+        bail!("段落留言最多 {MAX_PLAN_COMMENTS} 則");
+    }
+    if plan_revision != Some(plan.revision) {
+        bail!("方案已經更新（現在是第 {} 版），這些留言是針對舊版本寫的；請確認後重新送出", plan.revision + 1);
+    }
+    let bad = |s: &str| s.chars().any(|c| c.is_control() && c != '\n' && c != '\t');
+    for c in comments {
+        if c.text.trim().is_empty() {
+            bail!("有一則段落留言是空的");
+        }
+        if c.text.chars().count() > 1000 || c.quote.chars().count() > 300 || c.heading.chars().count() > 120 {
+            bail!("段落留言太長（留言 1,000 字、引文 300 字、標題 120 字）");
+        }
+        if bad(&c.text) || bad(&c.quote) || bad(&c.heading) {
+            bail!("段落留言含有不允許的控制字元");
+        }
+        if !plan.blocks.iter().any(|b| b.id == c.block_id) {
+            bail!("找不到留言對應的段落（{}）；方案可能已經更新", c.block_id);
+        }
+    }
+    Ok(())
+}
+
+/// `GET /api/digests/state` — drives the 情報 dot in the nav.
+#[derive(Clone, Debug, Serialize)]
+pub struct DigestState {
+    pub latest: Option<String>,
+    pub generated_at: Option<u64>,
+    pub unread: bool,
+    pub running: bool,
+}
 use crate::digest::{self, rank, Digest};
 use crate::event::Event;
 use crate::export;
@@ -48,6 +95,14 @@ impl Engine {
     /// Deliver a decision to a workshop waiting at the gate. Works for a live runner and for a
     /// session left waiting across an Agora restart (a new runner resumes from the gate).
     pub async fn decide(self: &Arc<Self>, id: &str, decision: GateDecision) -> Result<()> {
+        if let GateDecision::Revise { feedback, comments, plan_revision } = &decision {
+            let plan = match self.running.lock().await.get(id).cloned() {
+                Some(ctl) => ctl.record.lock().await.plan.clone(),
+                None => self.store.load_session(id).and_then(|r| r.plan),
+            }
+            .ok_or_else(|| anyhow!("這個議題沒有方案"))?;
+            validate_revision(&plan, feedback, comments, *plan_revision)?;
+        }
         if let Some(ctl) = self.running.lock().await.get(id).cloned() {
             let tx = ctl.gate.lock().await.take().ok_or_else(|| anyhow!("這個議題目前不在等待核准"))?;
             tx.send(decision).map_err(|_| anyhow!("議題已結束"))?;
@@ -341,6 +396,8 @@ impl Engine {
         }
         let selected = rank::select(items, &ds.keywords, ds.max_items.clamp(10, 80));
         let mut d = Digest { date: date.into(), generated_at: now_ms(), items: selected, sources, ..Default::default() };
+        // 和昨天相比 — from stored digests only; no extra model call.
+        digest::trend::annotate(&mut d, &self.digest_history(date), &ds.keywords);
         if ds.use_llm {
             match self.summarize_digest(&d, &ds).await {
                 Ok((text, who, usage)) => {
@@ -354,7 +411,7 @@ impl Engine {
         }
         if !d.llm_ok {
             let reason = d.llm_error.clone().unwrap_or_else(|| "已在設定關閉模型整理".into());
-            d.markdown = digest::fallback_markdown(&d.items, Some(&reason));
+            d.markdown = digest::fallback_markdown(&d.items, Some(&reason), digest::trend::summary_markdown(&d).as_deref());
         }
         self.store.save_digest(&d)?;
         Ok(d)
@@ -380,13 +437,16 @@ impl Engine {
         let settings = self.settings();
         let model = ds.model.clone().filter(|m| !m.is_empty()).or_else(|| settings.default_models.get(provider.id()).cloned().filter(|m| !m.is_empty()));
         let (tx, mut rx) = mpsc::unbounded_channel();
+        // Effort only when the summarizing model lists it (settings may outlive a model change).
+        let effort = ds.effort.filter(|e| crate::provider::supported_efforts(&provider.models(), model.as_deref()).contains(e));
         let req = TurnRequest {
-            prompt: digest::llm_prompt(&d.items, &ds.keywords, &d.date),
+            prompt: digest::llm_prompt(&d.items, &ds.keywords, &d.date, d.compared_with.as_deref().map(|p| (p, d.topic_trends.as_slice()))),
             model: model.clone(),
             cwd: self.store.sandbox_dir(),
             access: Access::ReadOnly,
             timeout: Duration::from_secs(15 * 60),
             cancel: CancellationToken::new(),
+            effort,
             clean_config: settings.isolate_cli_config,
         };
         let p = provider.clone();
@@ -409,10 +469,41 @@ impl Engine {
     }
 
     pub fn digest(&self, date: &str) -> Option<Digest> {
-        if date == "latest" {
-            return self.store.digest_dates().first().and_then(|d| self.store.load_digest(d));
+        let mut d = if date == "latest" { self.store.digest_dates().first().and_then(|d| self.store.load_digest(d)) } else { self.store.load_digest(date) }?;
+        // Digests stored before v0.4 have no trends: compute them on read, never rewrite history.
+        if d.compared_with.is_none() && d.items.iter().all(|i| i.trend.is_none()) {
+            let (history, keywords) = (self.digest_history(&d.date), self.settings().digest.keywords);
+            digest::trend::annotate(&mut d, &history, &keywords);
         }
-        self.store.load_digest(date)
+        Some(d)
+    }
+
+    /// Latest digest and whether that exact version has been opened (on any device).
+    pub fn digest_state(&self) -> DigestState {
+        let latest = self.store.digest_dates().into_iter().next();
+        let generated_at = latest.as_deref().and_then(|d| self.store.load_digest(d)).map(|d| d.generated_at);
+        let reads = self.store.digest_reads();
+        let unread = match (&latest, generated_at) {
+            (Some(d), Some(g)) => reads.get(d).is_none_or(|r| *r < g),
+            _ => false,
+        };
+        DigestState { latest, generated_at, unread, running: self.digest_running() }
+    }
+
+    pub fn mark_digest_read(&self, date: &str, generated_at: u64) -> Result<DigestState> {
+        self.store.mark_digest_read(date, generated_at)?;
+        Ok(self.digest_state())
+    }
+
+    /// Stored digests dated strictly before `date`, newest first, at most the trend window.
+    fn digest_history(&self, date: &str) -> Vec<Digest> {
+        self.store
+            .digest_dates()
+            .into_iter()
+            .filter(|d| d.as_str() < date)
+            .take(digest::trend::WINDOW_DAYS)
+            .filter_map(|d| self.store.load_digest(&d))
+            .collect()
     }
 
     // ---------------------------------------------------------------- schedules

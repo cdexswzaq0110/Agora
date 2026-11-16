@@ -21,7 +21,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::model::{Access, Family, TokenUsage, ToolNote};
+use crate::model::{Access, Effort, Family, TokenUsage, ToolNote};
 use crate::quota::QuotaSnapshot;
 
 pub struct TurnRequest {
@@ -31,6 +31,8 @@ pub struct TurnRequest {
     pub access: Access,
     pub timeout: Duration,
     pub cancel: CancellationToken,
+    /// Reasoning effort; `None` passes nothing (the model's default).
+    pub effort: Option<Effort>,
     /// Run the CLI without the user's personal configuration: no user-level MCP servers,
     /// plugins or hooks (Claude: `--strict-mcp-config --setting-sources project,local`;
     /// Codex: `--ignore-user-config`). See docs/lessons/0007.
@@ -85,6 +87,40 @@ pub struct Health {
 pub struct ModelOption {
     pub id: String,
     pub label: String,
+    /// Reasoning efforts this model accepts; empty = effort cannot be set for it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub efforts: Vec<Effort>,
+    /// The model's own default effort, when the CLI reports one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<Effort>,
+}
+
+impl ModelOption {
+    pub fn plain(id: &str, label: &str) -> Self {
+        ModelOption { id: id.into(), label: label.into(), efforts: vec![], default_effort: None }
+    }
+}
+
+/// Efforts accepted for `model` (`None`/empty = the CLI default entry, id `""`). A model that
+/// is not in the list falls back to the CLI-default entry, which is the intersection of all
+/// listed models — never wider than what every model accepts.
+pub fn supported_efforts(models: &[ModelOption], model: Option<&str>) -> Vec<Effort> {
+    let id = model.map(str::trim).unwrap_or("");
+    models
+        .iter()
+        .find(|m| m.id == id)
+        .or_else(|| models.iter().find(|m| m.id.is_empty()))
+        .map(|m| m.efforts.clone())
+        .unwrap_or_default()
+}
+
+/// Intersection of the efforts of every listed model (for the "CLI default" entry).
+pub fn common_efforts(models: &[ModelOption]) -> Vec<Effort> {
+    let listed: Vec<&ModelOption> = models.iter().filter(|m| !m.id.is_empty()).collect();
+    if listed.is_empty() {
+        return vec![];
+    }
+    Effort::ALL.into_iter().filter(|e| listed.iter().all(|m| m.efforts.contains(e))).collect()
 }
 
 #[async_trait]

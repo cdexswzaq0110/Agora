@@ -17,7 +17,7 @@ use super::proc;
 use super::resolve::resolve_claude;
 use super::stream::{run_capture, run_streaming, LineAction, RunResult};
 use super::{Health, ModelOption, Provider, ProviderEvent, Sink, TurnOutput, TurnRequest};
-use crate::model::{now_ms, Access, Family, TokenUsage, ToolNote};
+use crate::model::{now_ms, Access, Effort, Family, TokenUsage, ToolNote};
 use crate::quota::from_claude_rate_limit_info;
 
 pub const LOGIN_FIX: &str = "在終端機執行：claude auth login（選 Claude 訂閱帳號登入，不要用 API key／Console）";
@@ -25,11 +25,13 @@ pub const LOGIN_FIX: &str = "在終端機執行：claude auth login（選 Claude
 pub struct ClaudeCli {
     id: String,
     exe_override: Option<String>,
+    /// Effort levels this CLI lists for `--effort`, read from `claude --help` at health check.
+    efforts: std::sync::Mutex<Vec<Effort>>,
 }
 
 impl ClaudeCli {
     pub fn new(exe_override: Option<String>) -> Self {
-        ClaudeCli { id: "claude".into(), exe_override }
+        ClaudeCli { id: "claude".into(), exe_override, efforts: std::sync::Mutex::new(vec![]) }
     }
 
     fn exe(&self) -> Option<PathBuf> {
@@ -37,7 +39,34 @@ impl ClaudeCli {
     }
 }
 
-pub fn build_args(model: Option<&str>, access: Access, clean_config: bool) -> Vec<String> {
+/// Effort values listed for `--effort` in `claude --help`, e.g.
+/// `--effort <level>   Effort level … (low, medium, high, xhigh, max)`. The parenthesised list
+/// may wrap onto following lines. No `--effort`, no list, or an unexpected format → empty
+/// (effort is then not offered for Claude). Unknown names are skipped.
+pub fn parse_help_efforts(help: &str) -> Vec<Effort> {
+    let Some(start) = help.find("--effort") else {
+        return vec![];
+    };
+    let rest = &help[start..];
+    // Stop at the next option so another flag's parentheses are never read.
+    let end = rest[2..].find("\n  --").map(|i| i + 2).unwrap_or(rest.len());
+    let block = &rest[..end];
+    let (Some(open), Some(close)) = (block.find('('), block.rfind(')')) else {
+        return vec![];
+    };
+    if close <= open {
+        return vec![];
+    }
+    let mut out = Vec::new();
+    for e in block[open + 1..close].split(',').filter_map(Effort::parse) {
+        if !out.contains(&e) {
+            out.push(e);
+        }
+    }
+    out
+}
+
+pub fn build_args(model: Option<&str>, effort: Option<Effort>, access: Access, clean_config: bool) -> Vec<String> {
     let mut a: Vec<String> = [
         "-p",
         "--output-format",
@@ -52,6 +81,10 @@ pub fn build_args(model: Option<&str>, access: Access, clean_config: bool) -> Ve
     if let Some(m) = model.filter(|m| !m.trim().is_empty()) {
         a.push("--model".into());
         a.push(m.trim().into());
+    }
+    if let Some(e) = effort {
+        a.push("--effort".into());
+        a.push(e.as_str().into());
     }
     if clean_config {
         // No user-level MCP servers (e.g. desktop-control tools), plugins or hooks.
@@ -253,9 +286,10 @@ impl Provider for ClaudeCli {
         "Claude（Claude Code CLI）".into()
     }
     fn models(&self) -> Vec<ModelOption> {
+        let efforts = self.efforts.lock().unwrap().clone();
         [("", "CLI 預設"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")]
             .iter()
-            .map(|(id, label)| ModelOption { id: id.to_string(), label: label.to_string() })
+            .map(|(id, label)| ModelOption { id: id.to_string(), label: label.to_string(), efforts: efforts.clone(), default_effort: None })
             .collect()
     }
 
@@ -275,6 +309,12 @@ impl Provider for ClaudeCli {
         let mut v = proc::command(&exe);
         v.arg("--version");
         let version = run_capture(v, Duration::from_secs(20)).await.ok().map(|s| s.lines().next().unwrap_or("").to_string());
+        // Capability detection (free, local): which --effort levels this CLI version lists.
+        let mut hcmd = proc::command(&exe);
+        hcmd.arg("--help");
+        if let Ok(help) = run_capture(hcmd, Duration::from_secs(20)).await {
+            *self.efforts.lock().unwrap() = parse_help_efforts(&help);
+        }
         let mut a = proc::command(&exe);
         a.args(["auth", "status", "--json"]);
         let status = run_capture(a, Duration::from_secs(25)).await;
@@ -327,7 +367,7 @@ impl Provider for ClaudeCli {
             return TurnOutput::fail("找不到 Claude Code CLI（npm install -g @anthropic-ai/claude-code）");
         };
         let mut cmd = proc::command(&exe);
-        cmd.args(build_args(req.model.as_deref(), req.access, req.clean_config)).current_dir(&req.cwd);
+        cmd.args(build_args(req.model.as_deref(), req.effort, req.access, req.clean_config)).current_dir(&req.cwd);
         let mut parser = ClaudeStreamParser::new(&self.id);
         let res = run_streaming(cmd, req.prompt, req.timeout, req.cancel, |line| match parser.feed(line, now_ms()) {
             Ok(events) => {
@@ -412,14 +452,27 @@ mod tests {
 
     #[test]
     fn read_only_turns_cannot_edit() {
-        let a = build_args(Some("sonnet"), Access::ReadOnly, true).join(" ");
+        let a = build_args(Some("sonnet"), None, Access::ReadOnly, true).join(" ");
         assert!(a.contains("--permission-mode dontAsk"));
         assert!(a.contains("--allowedTools Read,Grep,Glob"));
         assert!(!a.contains("Edit"));
         assert!(a.contains("--model sonnet"));
         assert!(a.contains("--strict-mcp-config") && a.contains("--setting-sources project,local"));
-        let w = build_args(None, Access::Write, false).join(" ");
+        let w = build_args(None, None, Access::Write, false).join(" ");
         assert!(w.contains("acceptEdits") && !w.contains("--model"));
         assert!(!w.contains("--strict-mcp-config"), "personal config kept when isolation is off");
     }
+
+    #[test]
+    fn effort_levels_come_from_help_text() {
+        let help = "Options:\n  --disallowedTools <tools...>  Deny (comma, separated)\n  --effort <level>                      Effort level for the current session\n                                        (low, medium, high, xhigh,\n                                        max, turbo)\n  --environment <id>  Create a new cloud session (not, this)\n";
+        assert_eq!(parse_help_efforts(help), vec![Effort::Low, Effort::Medium, Effort::High, Effort::Xhigh, Effort::Max], "wrapped list read; unknown 'turbo' skipped; other flags' parentheses ignored");
+        assert!(parse_help_efforts("  --model <m>  Model (opus, sonnet)\n").is_empty(), "no --effort → unsupported");
+        assert!(parse_help_efforts("  --effort <level>  Effort level\n  --other (low, high)\n").is_empty(), "no list of its own → unsupported");
+        let a = build_args(None, Some(Effort::Xhigh), Access::ReadOnly, true);
+        let i = a.iter().position(|x| x == "--effort").expect("--effort passed");
+        assert_eq!(a[i + 1], "xhigh");
+        assert!(!build_args(None, None, Access::ReadOnly, true).iter().any(|x| x == "--effort"));
+    }
+
 }

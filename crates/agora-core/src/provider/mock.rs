@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use super::{Health, ModelOption, Provider, ProviderEvent, Sink, TurnOutput, TurnRequest};
-use crate::model::{now_ms, Family, TokenUsage, ToolNote};
+use crate::model::{now_ms, Effort, Family, TokenUsage, ToolNote};
 use crate::quota::{QuotaSnapshot, QuotaStatus, QuotaWindow};
 
 pub struct MockProvider {
@@ -18,11 +18,18 @@ pub struct MockProvider {
     family: Family,
     pub delay: Duration,
     calls: AtomicU64,
+    efforts: Vec<Effort>,
 }
 
 impl MockProvider {
     pub fn new(id: &str, family: Family) -> Self {
-        MockProvider { id: id.into(), family, delay: Duration::from_millis(60), calls: AtomicU64::new(0) }
+        MockProvider { id: id.into(), family, delay: Duration::from_millis(60), calls: AtomicU64::new(0), efforts: Effort::ALL.to_vec() }
+    }
+
+    /// Restrict the efforts this mock lists (tests of validation and defaults).
+    pub fn with_efforts(mut self, efforts: &[Effort]) -> Self {
+        self.efforts = efforts.to_vec();
+        self
     }
 
     pub fn with_delay(mut self, d: Duration) -> Self {
@@ -66,7 +73,7 @@ impl MockProvider {
                 "（{who}）\n\n| 提案 | 正確性 | 簡潔度 | 風險 | 成本 | 可測試性 |\n|---|---|---|---|---|---|\n| Claude | 4 | 5 | 4 | 4 | 4 |\n| GPT | 4 | 4 | 4 | 3 | 5 |\n\n建議組合：Claude 的結構加上 GPT 的測試策略。"
             ),
             "總結者" if prompt.contains("可以直接交給工程師實作") || prompt.contains("修訂最終方案") => format!(
-                "（{who}）\n\n## 提案評分\n| 提案 | 總分 |\n|---|---|\n| Claude | 21 |\n| GPT | 20 |\n## 最終方案\n### 目標\n完成「{topic}」。\n### 採用的做法與理由\n採用 Claude 的結構與 GPT 的測試策略。\n### 實作步驟\n1. 新增模組\n2. 補上測試\n### 會動到的檔案\n- src/feature.rs\n### 風險與對策\n- 保留舊介面\n### 驗收標準\n1. 新功能有測試且通過\n2. 舊測試全部通過\n### 建議的驗證指令\n`cargo test`\n### 不做的事\n- 不改公開 API\n整體證據等級：推論"
+                "（{who}）\n\n## 提案評分\n| 提案 | 總分 |\n|---|---|\n| Claude | 21 |\n| GPT | 20 |\n## 最終方案\n### 目標\n完成「{topic}」。\n### 採用的做法與理由\n採用 Claude 的結構與 GPT 的測試策略。\n### 實作步驟\n1. 新增模組\n2. 補上測試\n### 會動到的檔案\n- src/feature.rs\n### 風險與對策\n- 保留舊介面\n### 驗收標準\n1. 新功能有測試且通過\n2. 舊測試全部通過\n### 建議的驗證指令\n`cargo test`\n### 不做的事\n- 不改公開 API\n記憶：{topic} 採用 Claude 的結構加上 GPT 的測試策略。\n整體證據等級：推論"
             ),
             "執行者" if prompt.contains("要求修訂") => format!(
                 "（{who}）已依審查意見修正。\n\n## 修訂摘要\n- 【高】補上空輸入處理\n- 【低】命名已統一"
@@ -82,7 +89,7 @@ impl MockProvider {
                 "（{who}）\n\n## 立場\n針對「{topic}」，我建議先做最小可行版本。\n## 理由\n- 風險低\n## 我不確定的地方\n- 使用量規模【未知】"
             ),
             "總結者" => format!(
-                "（{who}）\n\n## 共識\n- 先做最小可行版本\n## 分歧\n- 擴充時機\n## 建議做法\n先上線最小版本，再依使用量擴充。\n## 待驗證事項\n- 實際使用量\n整體證據等級：推論"
+                "（{who}）\n\n## 共識\n- 先做最小可行版本\n## 分歧\n- 擴充時機\n## 建議做法\n先上線最小版本，再依使用量擴充。\n## 待驗證事項\n- 實際使用量\n記憶：先上線最小版本，再依使用量擴充。\n整體證據等級：推論"
             ),
             "正方" => format!("（{who}）\n\n## 主張\n採用方案 A。\n## 論證\n- 成本低【推論】"),
             "反方" => format!("（{who}）\n\n## 質疑\n方案 A 擴充性不足。\n## 替代方案\n方案 B。"),
@@ -121,7 +128,9 @@ impl Provider for MockProvider {
         true
     }
     fn models(&self) -> Vec<ModelOption> {
-        vec![ModelOption { id: String::new(), label: "模擬模型".into() }]
+        // Accepts every effort so the UI and validation can be exercised offline.
+        let default_effort = self.efforts.contains(&Effort::Medium).then_some(Effort::Medium);
+        vec![ModelOption { id: String::new(), label: "模擬模型".into(), efforts: self.efforts.clone(), default_effort }]
     }
 
     async fn health(&self) -> Health {

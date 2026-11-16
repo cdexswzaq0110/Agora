@@ -206,6 +206,37 @@ impl Runner {
             }
         }
 
+        // Reasoning effort. An explicit participant value was validated at start; it is dropped
+        // when the turn moved to another provider. Otherwise the settings default applies only
+        // when this model lists it — never sent to a model that would reject it.
+        let models = provider.models();
+        let supported = crate::provider::supported_efforts(&models, model.as_deref());
+        let mut effort_note = None;
+        let effort = if rerouted_from.is_some() {
+            None
+        } else if let Some(e) = participant.effort {
+            Some(e)
+        } else {
+            match self.settings.default_efforts.get(provider.id()).copied() {
+                Some(d) if supported.contains(&d) => Some(d),
+                Some(d) => {
+                    effort_note = Some(format!(
+                        "預設推理強度「{}」不適用於 {}（{}），這一則改用模型預設。",
+                        d.as_str(),
+                        provider.display_name(),
+                        model.clone().unwrap_or_else(|| "CLI 預設模型".into())
+                    ));
+                    None
+                }
+                None => None,
+            }
+        };
+        let model_id = model.clone().unwrap_or_default();
+        let effective_effort = effort.or_else(|| models.iter().find(|m| m.id == model_id).and_then(|m| m.default_effort));
+        if let Some(n) = effort_note {
+            self.note(NoteLevel::Info, n).await;
+        }
+
         let (turn, prompt, compaction_note) = {
             let mut r = self.ctl.record.lock().await;
             let labels = self.spec.blind.then(|| Self::blind_labels(&r.turns));
@@ -265,6 +296,8 @@ impl Runner {
                 context_compacted: compacted.was_compacted(),
                 seeded: false,
                 rerouted_from: rerouted_from.clone(),
+                effort,
+                effective_effort,
             };
             r.turns.push(turn.clone());
             r.updated_at = now_ms();
@@ -300,6 +333,7 @@ impl Runner {
                 access,
                 timeout: Duration::from_secs(self.settings.turn_timeout_secs.max(30)),
                 cancel: self.ctl.cancel.child_token(),
+                effort,
                 clean_config: self.settings.isolate_cli_config,
             };
             let prov = provider.clone();
@@ -394,13 +428,19 @@ impl Runner {
         Ok(run)
     }
 
-    pub async fn set_verdict(&self, v: Verdict) {
+    pub async fn set_verdict(&self, mut v: Verdict) {
+        if v.memory_hint.is_none() {
+            // Newest successful turn of this session that offered a `記憶：` line.
+            let r = self.ctl.record.lock().await;
+            v.memory_hint = r.turns.iter().rev().filter(|t| t.ok && !t.seeded).find_map(|t| prompts::extract_memory(&t.text));
+        }
         self.ctl.record.lock().await.verdict = Some(v.clone());
         self.engine.emit(Event::Verdict { session_id: self.session_id.clone(), verdict: v });
         self.persist().await;
     }
 
-    pub async fn set_plan(&self, plan: Plan) {
+    pub async fn set_plan(&self, mut plan: Plan) {
+        plan.blocks = prompts::plan_blocks(&plan.text);
         self.ctl.record.lock().await.plan = Some(plan.clone());
         self.engine.emit(Event::Plan { session_id: self.session_id.clone(), plan });
         self.persist().await;

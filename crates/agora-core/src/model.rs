@@ -127,17 +127,54 @@ impl Role {
     }
 }
 
+/// Reasoning effort passed to the CLI (Codex `-c model_reasoning_effort=…`, Claude `--effort`).
+/// A closed set so typos never reach a CLI; which values a model accepts comes from the
+/// provider's capability list (`ModelOption::efforts`) and is checked in `Engine::validate`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum Effort {
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+    Ultra,
+}
+
+impl Effort {
+    pub const ALL: [Effort; 6] = [Effort::Low, Effort::Medium, Effort::High, Effort::Xhigh, Effort::Max, Effort::Ultra];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High => "high",
+            Effort::Xhigh => "xhigh",
+            Effort::Max => "max",
+            Effort::Ultra => "ultra",
+        }
+    }
+
+    /// Unknown names (a newer CLI) are ignored, never guessed.
+    pub fn parse(s: &str) -> Option<Effort> {
+        Effort::ALL.into_iter().find(|e| e.as_str().eq_ignore_ascii_case(s.trim()))
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Participant {
     /// Provider id, e.g. `claude`, `codex`, `mock-claude`.
     pub provider: String,
     #[serde(default)]
     pub model: Option<String>,
+    /// `None` = the model's own default effort (nothing is passed to the CLI).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<Effort>,
 }
 
 impl Participant {
     pub fn new(provider: &str) -> Self {
-        Participant { provider: provider.into(), model: None }
+        Participant { provider: provider.into(), model: None, effort: None }
     }
 }
 
@@ -264,6 +301,12 @@ pub struct Turn {
     /// Set when the quota guard moved this turn to another provider.
     #[serde(default)]
     pub rerouted_from: Option<String>,
+    /// Reasoning effort actually passed to the CLI for this turn (audit trail).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<Effort>,
+    /// `effort`, or the model's own default when the CLI reports it; `None` = unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_effort: Option<Effort>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -328,6 +371,10 @@ pub struct Verdict {
     pub grade: EvidenceGrade,
     pub summary: String,
     pub open_issues: Vec<String>,
+    /// One sentence worth remembering for later sessions, from the model's `記憶：` line.
+    /// Only ever a suggestion: the user edits and confirms before anything is written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_hint: Option<String>,
 }
 
 /// The workshop's synthesized plan and the human decision on it.
@@ -343,6 +390,28 @@ pub struct Plan {
     pub decided_at: Option<u64>,
     /// Revision requests sent back to the synthesizer.
     pub feedback: Vec<String>,
+    /// `##`/`###` sections of `text` (outside code fences), recomputed whenever the plan is
+    /// set — the only valid anchors for section comments on *this* revision.
+    #[serde(default)]
+    pub blocks: Vec<PlanBlock>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+pub struct PlanBlock {
+    pub id: String,
+    pub heading: String,
+    pub level: u8,
+}
+
+/// A comment on one section of the plan, sent with 要求修訂.
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+pub struct PlanComment {
+    pub block_id: String,
+    #[serde(default)]
+    pub heading: String,
+    #[serde(default)]
+    pub quote: String,
+    pub text: String,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

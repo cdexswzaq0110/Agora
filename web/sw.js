@@ -1,6 +1,6 @@
 /* Minimal offline shell for the installable PWA. API calls are never cached. */
-const CACHE = 'agora-shell-v3';
-const SHELL = ['/', '/app.css', '/js/main.js', '/js/util.js', '/js/md.js', '/js/state.js', '/js/home.js', '/js/session.js', '/js/digest.js', '/js/usage.js', '/js/settings.js', '/js/experiment.js', '/js/pair.js', '/js/voice.js', '/js/attention.js', '/icon.svg', '/icon-192.png', '/manifest.webmanifest'];
+const CACHE = 'agora-shell-v4';
+const SHELL = ['/', '/app.css', '/js/main.js', '/js/util.js', '/js/md.js', '/js/state.js', '/js/home.js', '/js/session.js', '/js/digest.js', '/js/usage.js', '/js/settings.js', '/js/experiment.js', '/js/pair.js', '/js/voice.js', '/js/attention.js', '/js/shortcuts.js', '/icon.svg', '/icon-192.png', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

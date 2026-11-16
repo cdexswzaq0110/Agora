@@ -20,8 +20,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use super::proc;
 use super::resolve::{codex_home, resolve_codex};
 use super::stream::{run_capture, run_streaming, LineAction, RunResult};
-use super::{Health, ModelOption, Provider, ProviderEvent, Sink, TurnOutput, TurnRequest};
-use crate::model::{now_ms, Access, Family, TokenUsage, ToolNote};
+use super::{common_efforts, Health, ModelOption, Provider, ProviderEvent, Sink, TurnOutput, TurnRequest};
+use crate::model::{now_ms, Access, Effort, Family, TokenUsage, ToolNote};
 use crate::quota::{from_codex_rate_limits, QuotaSnapshot};
 
 pub const LOGIN_FIX: &str = "在終端機執行：codex login（選 Sign in with ChatGPT，不要用 API key）";
@@ -171,7 +171,10 @@ pub async fn app_server_call(
     }
 }
 
-pub fn build_args(model: Option<&str>, access: Access, cwd: &Path, clean_config: bool) -> Vec<String> {
+/// `windows_sandbox`: the user's `[windows] sandbox` value, re-applied when `clean_config`
+/// skips config.toml. Without it Codex on Windows has no write sandbox and silently treats
+/// `workspace-write` as read-only — the builder could not change a single file (lessons/0011).
+pub fn build_args(model: Option<&str>, effort: Option<Effort>, access: Access, cwd: &Path, clean_config: bool, windows_sandbox: Option<&str>) -> Vec<String> {
     let mut a: Vec<String> = vec![
         "exec".into(),
         "--json".into(),
@@ -189,12 +192,51 @@ pub fn build_args(model: Option<&str>, access: Access, cwd: &Path, clean_config:
         a.push("-m".into());
         a.push(m.trim().into());
     }
+    if let Some(e) = effort {
+        // A config override; works with --ignore-user-config (only the file is skipped).
+        a.push("-c".into());
+        a.push(format!("model_reasoning_effort=\"{}\"", e.as_str()));
+    }
+    if let (true, Access::Write, Some(sb)) = (clean_config, access, windows_sandbox) {
+        a.push("-c".into());
+        a.push(format!("windows.sandbox=\"{sb}\""));
+    }
     if clean_config {
         // No ~/.codex/config.toml: no user MCP servers/plugins, no unsupported default model.
         a.push("--ignore-user-config".into());
     }
     a.push("-".into()); // prompt from stdin
     a
+}
+
+/// `[windows] sandbox = "elevated"` from config.toml → `elevated`. Only that one key is read;
+/// values outside `[A-Za-z0-9_-]` are ignored so nothing odd is ever passed to `-c`.
+pub fn parse_windows_sandbox(raw: &str) -> Option<String> {
+    let mut in_windows = false;
+    for l in raw.lines() {
+        let t = l.trim();
+        if t.starts_with('[') {
+            in_windows = t == "[windows]";
+            continue;
+        }
+        if !in_windows {
+            continue;
+        }
+        if let Some((k, v)) = t.split_once('=') {
+            if k.trim() == "sandbox" {
+                let v = v.split('#').next().unwrap_or("").trim().trim_matches('"').trim();
+                return (!v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')).then(|| v.to_string());
+            }
+        }
+    }
+    None
+}
+
+pub fn configured_windows_sandbox() -> Option<String> {
+    if !cfg!(windows) {
+        return None;
+    }
+    parse_windows_sandbox(&std::fs::read_to_string(codex_home()?.join("config.toml")).ok()?)
 }
 
 /// `The 'gpt-x' model is not supported…` → `gpt-x`.
@@ -377,7 +419,14 @@ fn read_models_cache() -> Vec<ModelOption> {
     let Ok(raw) = std::fs::read_to_string(path) else {
         return vec![];
     };
-    let Ok(v) = serde_json::from_str::<Value>(&raw) else {
+    parse_models_cache(&raw)
+}
+
+/// Models (and their reasoning efforts) from Codex's own `models_cache.json` — the same data
+/// `codex app-server` `model/list` returns, without spawning anything. Effort names are read
+/// as strings and mapped one by one: a value this build does not know is skipped, never fatal.
+pub fn parse_models_cache(raw: &str) -> Vec<ModelOption> {
+    let Ok(v) = serde_json::from_str::<Value>(raw) else {
         return vec![];
     };
     v.get("models")
@@ -388,11 +437,26 @@ fn read_models_cache() -> Vec<ModelOption> {
                 .filter_map(|m| {
                     let id = m.get("slug").and_then(Value::as_str)?.to_string();
                     let label = m.get("display_name").and_then(Value::as_str).unwrap_or(&id).to_string();
-                    Some(ModelOption { id, label })
+                    let efforts: Vec<Effort> = m
+                        .get("supported_reasoning_levels")
+                        .and_then(Value::as_array)
+                        .map(|ls| ls.iter().filter_map(|l| l.get("effort").and_then(Value::as_str).and_then(Effort::parse)).collect())
+                        .unwrap_or_default();
+                    let default_effort = m.get("default_reasoning_level").and_then(Value::as_str).and_then(Effort::parse).filter(|d| efforts.contains(d));
+                    Some(ModelOption { id, label, efforts, default_effort })
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// "CLI default" entry first. Its efforts are what *every* listed model accepts (the default
+/// model is unknown under --ignore-user-config); with no cache, a conservative low/medium/high.
+pub fn codex_model_options(default_label: String, listed: Vec<ModelOption>) -> Vec<ModelOption> {
+    let efforts = if listed.is_empty() { vec![Effort::Low, Effort::Medium, Effort::High] } else { common_efforts(&listed) };
+    let mut v = vec![ModelOption { id: String::new(), label: default_label, efforts, default_effort: None }];
+    v.extend(listed);
+    v
 }
 
 #[async_trait]
@@ -411,9 +475,7 @@ impl Provider for CodexCli {
             Some(m) => format!("CLI 預設（{m}）"),
             None => "CLI 預設（config.toml）".into(),
         };
-        let mut v = vec![ModelOption { id: String::new(), label }];
-        v.extend(read_models_cache());
-        v
+        codex_model_options(label, read_models_cache())
     }
 
     async fn health(&self) -> Health {
@@ -483,7 +545,8 @@ impl Provider for CodexCli {
             }
         }
         let mut cmd = proc::command(&exe);
-        cmd.args(build_args(req.model.as_deref(), req.access, &req.cwd, req.clean_config)).current_dir(&req.cwd);
+        let sandbox = configured_windows_sandbox();
+        cmd.args(build_args(req.model.as_deref(), req.effort, req.access, &req.cwd, req.clean_config, sandbox.as_deref())).current_dir(&req.cwd);
         let mut parser = CodexJsonParser::new(req.model.as_deref());
         let res = run_streaming(cmd, req.prompt, req.timeout, req.cancel, |line| {
             for e in parser.feed(line) {
@@ -572,10 +635,60 @@ mod tests {
 
     #[test]
     fn args_pick_sandbox_from_access_and_read_prompt_from_stdin() {
-        let a = build_args(Some("gpt-6-sol"), Access::ReadOnly, Path::new("C:/p"), true).join(" ");
+        let e = build_args(None, Some(Effort::High), Access::ReadOnly, Path::new("C:/p"), true, None);
+        let i = e.iter().position(|x| x == "-c").expect("effort override");
+        assert_eq!(e[i + 1], "model_reasoning_effort=\"high\"");
+        assert_eq!(e.last().map(String::as_str), Some("-"), "prompt still comes from stdin");
+        let a = build_args(Some("gpt-6-sol"), None, Access::ReadOnly, Path::new("C:/p"), true, Some("elevated")).join(" ");
+        assert!(!a.contains("windows.sandbox"), "read-only turns need no write sandbox");
+        assert!(!a.contains("model_reasoning_effort"), "no effort → nothing passed");
         assert!(a.contains("-s read-only") && a.contains("-m gpt-6-sol") && a.ends_with(" -"));
         assert!(a.contains("--ignore-user-config"));
-        let w = build_args(None, Access::Write, Path::new("C:/p"), false).join(" ");
+        let iso = build_args(None, None, Access::Write, Path::new("C:/p"), true, Some("elevated")).join(" ");
+        assert!(iso.contains("-c windows.sandbox=\"elevated\"") && iso.contains("--ignore-user-config"), "{iso}");
+        assert!(!build_args(None, None, Access::Write, Path::new("C:/p"), true, None).join(" ").contains("windows.sandbox"));
+        let w = build_args(None, None, Access::Write, Path::new("C:/p"), false, Some("elevated")).join(" ");
+        assert!(!w.contains("windows.sandbox"), "without isolation the user's own config already applies");
         assert!(w.contains("-s workspace-write") && !w.contains(" -m ") && !w.contains("--ignore-user-config"));
     }
+
+    #[test]
+    fn models_cache_efforts_are_mapped_one_by_one() {
+        let raw = r#"{"models":[
+            {"slug":"gpt-a","display_name":"A","visibility":"list","default_reasoning_level":"low",
+             "supported_reasoning_levels":[{"effort":"low"},{"effort":"high"},{"effort":"turbo"}]},
+            {"slug":"gpt-b","visibility":"list","supported_reasoning_levels":[{"effort":"high"},{"effort":"max"}],
+             "default_reasoning_level":"warp"},
+            {"slug":"gpt-c","visibility":"list"},
+            {"slug":"hidden","visibility":"hide","supported_reasoning_levels":[{"effort":"low"}]}
+        ]}"#;
+        let ms = parse_models_cache(raw);
+        assert_eq!(ms.len(), 3, "hidden models are not offered");
+        assert_eq!(ms[0].efforts, vec![Effort::Low, Effort::High], "unknown 'turbo' skipped, not fatal");
+        assert_eq!(ms[0].default_effort, Some(Effort::Low));
+        assert_eq!(ms[1].default_effort, None, "unknown default is not guessed");
+        assert!(ms[2].efforts.is_empty(), "missing field → effort not offered for that model");
+        assert!(parse_models_cache("not json").is_empty());
+
+        // The CLI-default entry is the intersection of listed models (gpt-c has none → empty).
+        let opts = codex_model_options("CLI 預設".into(), ms.clone());
+        assert!(opts[0].id.is_empty() && opts[0].efforts.is_empty());
+        let opts = codex_model_options("CLI 預設".into(), ms[..2].to_vec());
+        assert_eq!(opts[0].efforts, vec![Effort::High]);
+        // No cache at all → conservative fallback, so effort still works on a fresh install.
+        let opts = codex_model_options("CLI 預設".into(), vec![]);
+        assert_eq!(opts[0].efforts, vec![Effort::Low, Effort::Medium, Effort::High]);
+        assert_eq!(crate::provider::supported_efforts(&opts, Some("unknown-model")), opts[0].efforts, "unknown model → default entry");
+    }
+
+
+    #[test]
+    fn windows_sandbox_is_the_only_key_read_from_config() {
+        let cfg = "model = \"x\"\nsandbox_mode = \"danger-full-access\"\n[mcp_servers.cua]\nsandbox = \"nope\"\n[windows]\nsandbox = \"elevated\" # set by codex\n[other]\n";
+        assert_eq!(parse_windows_sandbox(cfg).as_deref(), Some("elevated"));
+        assert_eq!(parse_windows_sandbox("[windows]\n"), None);
+        assert_eq!(parse_windows_sandbox("sandbox = \"elevated\"\n"), None, "top-level key is not the windows table");
+        assert_eq!(parse_windows_sandbox("[windows]\nsandbox = \"x\\\" --evil\"\n"), None, "odd values are never passed to -c");
+    }
+
 }

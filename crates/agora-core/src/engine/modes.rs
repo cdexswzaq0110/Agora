@@ -66,6 +66,7 @@ impl Runner {
                     grade: if v.ok { EvidenceGrade::Confirmed } else { EvidenceGrade::Unverified },
                     summary: headline,
                     open_issues: if v.ok { vec![] } else { vec![format!("`{}` 失敗（exit {:?}）", v.command, v.exit_code)] },
+                    memory_hint: None,
                 }
             }
             None => Verdict {
@@ -74,6 +75,7 @@ impl Runner {
                 grade: EvidenceGrade::Unverified,
                 summary: "單一模型的回答，未經另一個模型審查，也未經測試驗證。".into(),
                 open_issues: vec![],
+                memory_hint: None,
             },
         };
         self.set_verdict(verdict).await;
@@ -149,6 +151,7 @@ impl Runner {
                     grade: if verify_ok == Some(true) { EvidenceGrade::Confirmed } else { EvidenceGrade::Inferred },
                     summary,
                     open_issues: prompts::extract_issues(&review.text),
+                    memory_hint: None,
                 })
                 .await;
                 return Ok(());
@@ -171,6 +174,7 @@ impl Runner {
                     grade: if verify_ok == Some(false) { EvidenceGrade::Unverified } else { EvidenceGrade::Candidate },
                     summary,
                     open_issues: issues,
+                    memory_hint: None,
                 })
                 .await;
                 return Ok(());
@@ -216,6 +220,7 @@ impl Runner {
             grade: parsed.unwrap_or(EvidenceGrade::Candidate).min(EvidenceGrade::Inferred),
             summary: advice.unwrap_or_else(|| compact::truncate_chars(&s.text, 600)),
             open_issues: list_items(prompts::section(&s.text, "待驗證").as_deref()),
+            memory_hint: None,
         })
         .await;
         Ok(())
@@ -268,6 +273,7 @@ impl Runner {
                 grade: grades.iter().copied().min().unwrap_or(EvidenceGrade::Candidate).min(EvidenceGrade::Inferred),
                 summary: advice.unwrap_or_else(|| compact::truncate_chars(&first.text, 600)),
                 open_issues,
+                memory_hint: None,
             }
         } else {
             let detail: Vec<String> = rulings
@@ -281,6 +287,7 @@ impl Runner {
                 grade: EvidenceGrade::Candidate,
                 summary: advice.unwrap_or_else(|| compact::truncate_chars(&first.text, 600)),
                 open_issues,
+                memory_hint: None,
             }
         };
         self.set_verdict(verdict).await;
@@ -409,11 +416,22 @@ impl Runner {
                     }
                     return Ok(true);
                 }
-                GateDecision::Revise { feedback } => {
-                    let feedback = feedback.trim().to_string();
-                    if feedback.is_empty() {
+                GateDecision::Revise { feedback, comments, .. } => {
+                    let request = prompts::revision_request(&feedback, &comments, &plan.blocks);
+                    if request.trim().is_empty() {
                         continue;
                     }
+                    let feedback = {
+                        let mut f = feedback.trim().to_string();
+                        for c in &comments {
+                            let heading = plan.blocks.iter().find(|b| b.id == c.block_id).map(|b| b.heading.clone()).unwrap_or_else(|| c.heading.clone());
+                            if !f.is_empty() {
+                                f.push('\n');
+                            }
+                            f.push_str(&format!("「{heading}」：{}", c.text.trim()));
+                        }
+                        f
+                    };
                     if plan.revision >= MAX_PLAN_REVISIONS {
                         self.note(NoteLevel::Guard, format!("已達方案修訂上限（{MAX_PLAN_REVISIONS} 次）：請直接修改文字後核准，或結束。")).await;
                         continue;
@@ -424,7 +442,7 @@ impl Runner {
                     let r = self.next_round().await;
                     let s = self
                         .turn(
-                            self.plan(synth, Role::Synthesizer, r, prompts::ask_plan_revise(&format!("使用者的修改要求「{feedback}」")), Access::ReadOnly),
+                            self.plan(synth, Role::Synthesizer, r, prompts::ask_plan_revise(&request), Access::ReadOnly),
                             self.visible_now().await,
                         )
                         .await?;
@@ -458,6 +476,7 @@ impl Runner {
             grade: synth_grade.unwrap_or(EvidenceGrade::Candidate).min(EvidenceGrade::Inferred),
             summary: compact::truncate_chars(&plan.text, 1500),
             open_issues: list_items(prompts::section(&plan.text, "驗收標準").as_deref()),
+            memory_hint: None,
         })
         .await;
     }

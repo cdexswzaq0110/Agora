@@ -37,7 +37,7 @@ pub fn canonical(url: &str) -> String {
     }
 }
 
-fn norm_title(t: &str) -> String {
+pub(crate) fn norm_title(t: &str) -> String {
     t.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect()
 }
 

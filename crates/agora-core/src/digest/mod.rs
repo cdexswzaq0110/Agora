@@ -11,11 +11,12 @@
 
 pub mod rank;
 pub mod sources;
+pub mod trend;
 
 use serde::{Deserialize, Serialize};
 
 use crate::compact::truncate_chars;
-use crate::model::TokenUsage;
+use crate::model::{Effort, TokenUsage};
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct DigestItem {
@@ -49,6 +50,9 @@ pub struct DigestItem {
     pub matched_keywords: Vec<String>,
     #[serde(default)]
     pub rank: f64,
+    /// 和昨天相比 — see `trend::annotate`. `None` when there is no earlier digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trend: Option<trend::Trend>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -74,6 +78,12 @@ pub struct Digest {
     pub summarizer: Option<String>,
     pub usage: Option<TokenUsage>,
     pub sources: Vec<SourceStatus>,
+    /// Date of the digest this one was compared with (`None` = no comparison).
+    #[serde(default)]
+    pub compared_with: Option<String>,
+    /// Keyword hit counts, today vs the compared digest.
+    #[serde(default)]
+    pub topic_trends: Vec<trend::TopicTrend>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -91,6 +101,9 @@ pub struct DigestSettings {
     pub model: Option<String>,
     pub max_items: usize,
     pub use_llm: bool,
+    /// Reasoning effort for the summarizing CLI call; `None` = the model's default.
+    #[serde(default)]
+    pub effort: Option<Effort>,
 }
 
 impl Default for DigestSettings {
@@ -111,6 +124,7 @@ impl Default for DigestSettings {
             model: None,
             max_items: 36,
             use_llm: true,
+            effort: None,
         }
     }
 }
@@ -123,6 +137,30 @@ impl DigestSettings {
         let m = it.next().and_then(|x| x.trim().parse().ok()).filter(|m: &u32| *m < 60).unwrap_or(0);
         (h, m)
     }
+}
+
+/// `【新上榜】`, `【升溫 +40 分】`, `【連續 3 天】` — facts the model may cite, never infer.
+fn trend_tags(i: &DigestItem) -> String {
+    let Some(t) = &i.trend else {
+        return String::new();
+    };
+    let mut tags = Vec::new();
+    match t.kind {
+        trend::TrendKind::New => tags.push("【新上榜】".to_string()),
+        trend::TrendKind::Rising => {
+            let unit = match t.metric.as_deref() {
+                Some("stars_today") => " stars",
+                Some("comments") => " 則留言",
+                _ => " 分",
+            };
+            tags.push(format!("【升溫 +{}{unit}】", t.delta.unwrap_or(0)));
+        }
+        _ => {}
+    }
+    if t.streak >= 2 {
+        tags.push(format!("【連續 {} 天】", t.streak));
+    }
+    tags.concat()
 }
 
 fn item_line(i: &DigestItem) -> String {
@@ -145,7 +183,7 @@ fn item_line(i: &DigestItem) -> String {
     if !i.also_on.is_empty() {
         meta.push(format!("也出現在 {}", i.also_on.join("、")));
     }
-    let mut s = format!("[{}] （{}）{}", i.n, i.source_label, i.title);
+    let mut s = format!("[{}] （{}）{}{}", i.n, i.source_label, trend_tags(i), i.title);
     if !meta.is_empty() {
         s.push_str(&format!(" — {}", meta.join(" · ")));
     }
@@ -156,13 +194,24 @@ fn item_line(i: &DigestItem) -> String {
 }
 
 /// The single prompt that turns ranked items into the digest.
-pub fn llm_prompt(items: &[DigestItem], keywords: &[String], date: &str) -> String {
+pub fn llm_prompt(items: &[DigestItem], keywords: &[String], date: &str, compare: Option<(&str, &[trend::TopicTrend])>) -> String {
     let list: Vec<String> = items.iter().map(item_line).collect();
+    let compare_section = match compare {
+        None => String::new(),
+        Some((prev, topics)) => {
+            let moved: Vec<String> = topics.iter().map(|t| format!("{} {}→{}", t.keyword, t.previous, t.today)).collect();
+            format!(
+                "## 和昨天相比\n（對照 {prev} 的情報，2–4 點：根據項目上的【新上榜】【升溫】【連續 N 天】標記，說明今天多了什麼、什麼持續升溫；{}。沒有標記就不要宣稱「新」或「升溫」）\n",
+                if moved.is_empty() { "關注主題的出現次數沒有變化".to_string() } else { format!("關注主題出現次數（前一份→今天）：{}", moved.join("、")) }
+            )
+        }
+    };
     format!(
         "你是 Agora 的每日技術情報編輯。以下是 {date} 從 Hacker News、Lobsters、Reddit、GitHub Trending、dev.to、Hugging Face Papers 擷取的熱門項目。\
          你拿到的只有標題、熱度與簡短介紹，**沒有全文**；不需要讀檔，也不要上網查詢。\n\n\
          請用繁體中文，為一位軟體工程師／AI 工程師寫一份 5 分鐘能讀完的摘要，依序輸出：\n\
          ## 今日三大重點\n（每點 2–3 句：發生了什麼、為什麼重要）\n\
+         {compare_section}\
          ## 技術趨勢觀察\n（3–5 點：跨來源反覆出現的主題，說明是哪些項目共同指向它）\n\
          ## GitHub 熱門專案\n（每個一行：名稱 — 它做什麼；為什麼現在受關注）\n\
          ## 論壇熱議\n（每則一行：主題 — 大家在爭論或關心的點）\n\
@@ -177,10 +226,13 @@ pub fn llm_prompt(items: &[DigestItem], keywords: &[String], date: &str) -> Stri
 }
 
 /// Deterministic digest when no model is available.
-pub fn fallback_markdown(items: &[DigestItem], reason: Option<&str>) -> String {
+pub fn fallback_markdown(items: &[DigestItem], reason: Option<&str>, compare: Option<&str>) -> String {
     let mut s = String::new();
     if let Some(r) = reason {
         s.push_str(&format!("> 這份是未經模型整理的清單：{r}\n\n"));
+    }
+    if let Some(c) = compare {
+        s.push_str(c);
     }
     let mut groups: Vec<(String, Vec<&DigestItem>)> = Vec::new();
     for i in items {
@@ -228,10 +280,17 @@ mod tests {
             score: Some(321),
             ..Default::default()
         }];
-        let p = llm_prompt(&items, &["rust".into()], "2026-11-16");
+        let p = llm_prompt(&items, &["rust".into()], "2026-11-16", None);
         assert!(p.contains("[1] （Hacker News）Show HN: X — 321 分"));
         assert!(p.contains("不要編造") && p.contains("rust"));
-        let f = fallback_markdown(&items, Some("沒有可用的模型"));
+        assert!(!p.contains("和昨天相比"), "no earlier digest → no comparison section");
+        let mut tagged = items.clone();
+        tagged[0].trend = Some(trend::Trend { kind: trend::TrendKind::Rising, streak: 3, metric: Some("score".into()), delta: Some(40), ..Default::default() });
+        let topics = [trend::TopicTrend { keyword: "rust".into(), today: 2, previous: 1 }];
+        let p = llm_prompt(&tagged, &[], "2026-11-16", Some(("2026-11-15", &topics)));
+        assert!(p.contains("[1] （Hacker News）【升溫 +40 分】【連續 3 天】Show HN: X"), "{p}");
+        assert!(p.contains("## 和昨天相比") && p.contains("對照 2026-11-15") && p.contains("rust 1→2"));
+        let f = fallback_markdown(&items, Some("沒有可用的模型"), None);
         assert!(f.contains("## Hacker News") && f.contains("[Show HN: X](https://x.dev)"));
     }
 

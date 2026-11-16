@@ -225,7 +225,7 @@ async fn remember_appends_verdict_to_project_memory() {
     let e = engine("memory");
     let rec = e.start(spec(&e, Mode::Debate, both(), "記憶測試")).await.unwrap();
     wait_done(&e, &rec.id).await;
-    let proj = e.remember(&rec.id).await.unwrap();
+    let proj = e.remember(&rec.id, None).await.unwrap();
     assert!(proj.memory.contains("記憶測試") && proj.memory.contains("推論"));
 }
 
@@ -289,7 +289,7 @@ async fn workshop_revise_then_reject_keeps_the_plan_without_building() {
     let e = engine("ws-revise");
     let rec = e.start(spec(&e, Mode::Workshop, both(), "規劃一個快取層")).await.unwrap();
     wait_gate(&e, &rec.id).await;
-    e.decide(&rec.id, GateDecision::Revise { feedback: "更簡單一點".into() }).await.unwrap();
+    e.decide(&rec.id, GateDecision::Revise { feedback: "更簡單一點".into(), comments: vec![], plan_revision: None }).await.unwrap();
     let r = wait_until(&e, &rec.id, |r| r.plan.as_ref().is_some_and(|p| p.revision == 1) && r.status == Status::AwaitingApproval).await;
     assert_eq!(r.plan.as_ref().unwrap().feedback, vec!["更簡單一點".to_string()]);
     e.decide(&rec.id, GateDecision::Reject { reason: Some("先不做".into()) }).await.unwrap();
@@ -436,4 +436,140 @@ async fn schedules_start_a_session_once_per_day() {
     assert!(rec.title.contains("每晚審查"));
     assert_eq!(e.settings().schedules[0].last_run.as_deref(), Some("2026-11-16"));
     wait_done(&e, &rec.id).await;
+}
+
+
+#[tokio::test]
+async fn effort_is_validated_recorded_and_defaulted() {
+    let providers: Vec<Arc<dyn Provider>> = vec![
+        Arc::new(MockProvider::new("mock-claude", Family::Claude).with_delay(Duration::from_millis(3))),
+        Arc::new(MockProvider::new("mock-gpt", Family::Gpt).with_delay(Duration::from_millis(3)).with_efforts(&[Effort::Low, Effort::High])),
+    ];
+    let e = Engine::with_providers(Store::open(temp_dir("effort")).unwrap(), providers).unwrap();
+
+    // An effort the model does not list is a hard error (→ 400), never a silent downgrade.
+    let mut bad = p("mock-gpt");
+    bad.effort = Some(Effort::Xhigh);
+    let err = e.start(spec(&e, Mode::Solo, vec![bad], "effort?")).await.unwrap_err().to_string();
+    assert!(err.contains("不支援推理強度") && err.contains("low") && err.contains("high"), "{err}");
+
+    // A listed effort is passed and recorded on the turn.
+    let mut ok = p("mock-gpt");
+    ok.effort = Some(Effort::High);
+    let r = wait_done(&e, &e.start(spec(&e, Mode::Solo, vec![ok], "effort ok")).await.unwrap().id).await;
+    assert_eq!(r.turns[0].effort, Some(Effort::High));
+    assert_eq!(r.turns[0].effective_effort, Some(Effort::High));
+
+    // No effort: nothing passed; the model's reported default is the effective one.
+    let r = wait_done(&e, &e.start(spec(&e, Mode::Solo, vec![p("mock-claude")], "default")).await.unwrap().id).await;
+    assert_eq!(r.turns[0].effort, None);
+    assert_eq!(r.turns[0].effective_effort, Some(Effort::Medium));
+
+    // A settings default the model does not list is skipped with a visible note.
+    e.update_settings(|s| {
+        s.default_efforts.insert("mock-gpt".into(), Effort::Max);
+        s.default_efforts.insert("mock-claude".into(), Effort::Xhigh);
+    })
+    .unwrap();
+    let r = wait_done(&e, &e.start(spec(&e, Mode::Solo, vec![p("mock-gpt")], "settings default")).await.unwrap().id).await;
+    assert_eq!(r.turns[0].effort, None);
+    assert!(r.notes.iter().any(|n| n.text.contains("不適用")), "{:?}", r.notes);
+    let r = wait_done(&e, &e.start(spec(&e, Mode::Solo, vec![p("mock-claude")], "settings default ok")).await.unwrap().id).await;
+    assert_eq!(r.turns[0].effort, Some(Effort::Xhigh));
+
+    // Old JSON (before v0.4) still loads.
+    let old: Participant = serde_json::from_str(r#"{"provider":"codex","model":null}"#).unwrap();
+    assert_eq!(old.effort, None);
+    assert!(!serde_json::to_string(&old).unwrap().contains("effort"), "None is not written");
+    let s: Settings = serde_json::from_str(r#"{"port":4717}"#).unwrap();
+    assert!(s.default_efforts.is_empty());
+    assert_eq!(Effort::parse(" XHigh "), Some(Effort::Xhigh));
+    assert_eq!(Effort::parse("turbo"), None);
+}
+
+
+#[tokio::test]
+async fn plan_section_comments_are_validated_and_reach_the_synthesizer() {
+    let e = engine("comments");
+    let mut s = spec(&e, Mode::Workshop, both(), "段落留言");
+    s.plan_only = true;
+    let rec = e.start(s).await.unwrap();
+    let r = wait_gate(&e, &rec.id).await;
+    assert_eq!(r.status, Status::AwaitingApproval);
+    let plan = r.plan.clone().unwrap();
+    assert!(plan.blocks.len() >= 3, "{:?}", plan.blocks);
+    let (b0, b1) = (plan.blocks[0].clone(), plan.blocks[1].clone());
+    let c = |b: &PlanBlock, text: &str| PlanComment { block_id: b.id.clone(), heading: b.heading.clone(), quote: String::new(), text: text.into() };
+    let revise = |comments: Vec<PlanComment>, rev: Option<u32>, feedback: &str| GateDecision::Revise { feedback: feedback.into(), comments, plan_revision: rev };
+
+    // Rejected before anything reaches the model: nothing at all, stale revision, unknown
+    // section, too many, control characters.
+    assert!(e.decide(&rec.id, revise(vec![], None, "  ")).await.is_err());
+    assert!(e.decide(&rec.id, revise(vec![c(&b0, "x")], Some(plan.revision + 1), "")).await.unwrap_err().to_string().contains("已經更新"));
+    assert!(e.decide(&rec.id, revise(vec![c(&b0, "x")], None, "")).await.is_err(), "comments need the revision they were written against");
+    let mut ghost = c(&b0, "x");
+    ghost.block_id = "不存在".into();
+    assert!(e.decide(&rec.id, revise(vec![ghost], Some(plan.revision), "")).await.is_err());
+    assert!(e.decide(&rec.id, revise((0..21).map(|_| c(&b0, "x")).collect(), Some(plan.revision), "")).await.is_err());
+    assert!(e.decide(&rec.id, revise(vec![c(&b0, "a\u{0007}b")], Some(plan.revision), "")).await.is_err());
+    assert_eq!(e.session(&rec.id).await.unwrap().status, Status::AwaitingApproval, "a rejected decision leaves the gate open");
+
+    // Valid: two comments → one revision; both recorded on the plan's feedback history.
+    e.decide(&rec.id, revise(vec![c(&b1, "第二段要具體"), c(&b0, "<script>x</script> 第一段")], Some(plan.revision), "")).await.unwrap();
+    let r = wait_until(&e, &rec.id, |r| r.plan.as_ref().is_some_and(|p| p.revision == 1) && r.status != Status::Running).await;
+    let fb = r.plan.as_ref().unwrap().feedback.join("\n");
+    assert!(fb.contains(&format!("「{}」：第二段要具體", b1.heading)) && fb.contains("<script>x</script> 第一段"), "{fb}");
+    assert!(!r.plan.as_ref().unwrap().blocks.is_empty(), "blocks recomputed for the new revision");
+
+    // Old clients: feedback only, no comments.
+    let old: GateDecision = serde_json::from_str(r#"{"action":"revise","feedback":"更短"}"#).unwrap();
+    assert!(matches!(old, GateDecision::Revise { ref comments, plan_revision: None, .. } if comments.is_empty()));
+}
+
+#[tokio::test]
+async fn digest_read_cursor_is_verified_monotonic_and_shared() {
+    let e = engine("read");
+    e.update_settings(|s| s.digest.use_llm = false).unwrap();
+    let items = || vec![DigestItem { source: "hn".into(), source_label: "HN".into(), title: "A".into(), url: "https://a.dev".into(), score: Some(10), ..Default::default() }];
+    let ok = || vec![SourceStatus { source: "hn".into(), label: "HN".into(), ok: true, count: 1, error: None, ms: 1 }];
+    assert!(!e.digest_state().unread, "nothing stored yet");
+
+    let older = e.compose_digest("2026-11-15", items(), ok()).await.unwrap();
+    let d1 = e.compose_digest("2026-11-16", items(), ok()).await.unwrap();
+    assert_eq!(d1.compared_with.as_deref(), Some("2026-11-15"), "trends computed against the earlier digest");
+    let st = e.digest_state();
+    assert_eq!((st.latest.as_deref(), st.unread), (Some("2026-11-16"), true));
+
+    assert!(e.mark_digest_read("2026-11-16", d1.generated_at + 1).is_err(), "a version that is not stored is refused");
+    assert!(e.mark_digest_read("../x", 1).is_err());
+    assert!(!e.mark_digest_read("2026-11-16", d1.generated_at).unwrap().unread);
+
+    // Reading an older day does not touch the latest.
+    e.mark_digest_read("2026-11-15", older.generated_at).unwrap();
+    assert!(!e.digest_state().unread);
+
+    // Same-day regeneration → unread again; the old cursor is no longer accepted.
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let d2 = e.compose_digest("2026-11-16", items(), ok()).await.unwrap();
+    assert!(d2.generated_at > d1.generated_at);
+    assert!(e.digest_state().unread);
+    assert!(e.mark_digest_read("2026-11-16", d1.generated_at).is_err());
+    assert!(!e.mark_digest_read("2026-11-16", d2.generated_at).unwrap().unread);
+}
+
+#[tokio::test]
+async fn memory_hint_is_suggested_and_custom_lines_are_cleaned() {
+    let e = engine("memory");
+    let rec = e.start(spec(&e, Mode::Roundtable, both(), "記憶建議")).await.unwrap();
+    let r = wait_done(&e, &rec.id).await;
+    let v = r.verdict.clone().unwrap();
+    assert_eq!(v.memory_hint.as_deref(), Some("先上線最小版本，再依使用量擴充。"));
+
+    assert!(e.remember(&rec.id, Some(" \n ")).await.is_err(), "blank is refused");
+    assert!(e.remember(&rec.id, Some(&"長".repeat(301))).await.is_err());
+    let p = e.remember(&rec.id, Some("  採用最小版本\n先上線  ")).await.unwrap();
+    let last = p.memory.lines().last().unwrap().to_string();
+    assert!(last.starts_with("- [") && last.contains("] 採用最小版本 先上線【") && last.ends_with('】'), "{last}");
+    let p = e.remember(&rec.id, None).await.unwrap();
+    assert!(p.memory.lines().last().unwrap().contains("（討論）"), "no line → the pre-v0.4 format");
 }

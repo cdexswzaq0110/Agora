@@ -3,9 +3,12 @@
 
 use agora_core::{model::random_hex, now_ms, store::PairedDevice, Engine};
 use axum::http::{header, HeaderMap};
-use std::net::{IpAddr, SocketAddr, UdpSocket};
+use serde::{Deserialize, Serialize};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+#[cfg(windows)]
+use std::path::Path;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const CODE_TTL_MS: u64 = 10 * 60_000;
 const MAX_FAILURES: usize = 8;
@@ -174,6 +177,124 @@ pub fn lan_ip() -> Option<IpAddr> {
     (!ip.is_unspecified() && !ip.is_loopback()).then_some(ip)
 }
 
+// ---------------------------------------------------------------- LAN candidates (phone QR)
+// Implemented by GPT (Codex CLI) in an isolated worktree, reviewed and merged by Claude with
+// three fixes: ASCII-only PowerShell output, more virtual-adapter markers, a 30 s cache.
+
+/// One private IPv4 address of this machine, with the adapter's name, for the QR code.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct LanCandidate {
+    pub ip: Ipv4Addr,
+    pub name: String,
+    #[serde(rename = "virtual")]
+    pub virtual_adapter: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct WindowsAddress {
+    interface_alias: String,
+    #[serde(rename = "IPAddress")]
+    ip_address: String,
+}
+
+fn private_ipv4(ip: Ipv4Addr) -> bool {
+    let [a, b, _, _] = ip.octets();
+    a == 10 || (a == 172 && (16..=31).contains(&b)) || (a == 192 && b == 168)
+}
+
+/// Adapters a phone on the Wi-Fi can never reach: hypervisor / WSL switches, VPN overlays,
+/// Bluetooth PAN, and Wi-Fi Direct ("Local Area Connection* 10" / 「區域連線* 10」).
+pub fn is_virtual_adapter(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    let wifi_direct = lower.split("* ").nth(1).is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
+    wifi_direct
+        || ["vethernet", "wsl", "hyper-v", "virtualbox", "vmware", "vmnet", "loopback", "tailscale", "zerotier", "bluetooth", "藍牙", "藍芽"]
+            .iter()
+            .any(|marker| lower.contains(marker))
+}
+
+pub fn parse_windows_lan_candidates(output: &[u8]) -> Vec<LanCandidate> {
+    let Ok(text) = std::str::from_utf8(output) else { return vec![] };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text.trim()) else { return vec![] };
+    let values = match value {
+        serde_json::Value::Array(values) => values,
+        serde_json::Value::Object(_) => vec![value],
+        _ => return vec![],
+    };
+    let mut candidates = Vec::new();
+    for value in values {
+        let Ok(address) = serde_json::from_value::<WindowsAddress>(value) else { continue };
+        let Ok(ip) = address.ip_address.parse::<Ipv4Addr>() else { continue };
+        if !private_ipv4(ip) || candidates.iter().any(|candidate: &LanCandidate| candidate.ip == ip) {
+            continue;
+        }
+        candidates.push(LanCandidate { ip, virtual_adapter: is_virtual_adapter(&address.interface_alias), name: address.interface_alias });
+    }
+    candidates
+}
+
+/// The default-route address, unless it is a virtual adapter and a physical one exists.
+pub fn select_lan_candidate(candidates: &[LanCandidate], default: Option<IpAddr>) -> Option<LanCandidate> {
+    let default = match default {
+        Some(IpAddr::V4(ip)) => candidates.iter().find(|candidate| candidate.ip == ip),
+        _ => None,
+    };
+    match default {
+        Some(candidate) if candidate.virtual_adapter => candidates.iter().find(|candidate| !candidate.virtual_adapter).or(Some(candidate)).cloned(),
+        Some(candidate) => Some(candidate.clone()),
+        None => candidates.iter().find(|candidate| !candidate.virtual_adapter).or(candidates.first()).cloned(),
+    }
+}
+
+fn fallback_lan_candidates(default: Option<IpAddr>) -> Vec<LanCandidate> {
+    match default {
+        Some(IpAddr::V4(ip)) if private_ipv4(ip) => vec![LanCandidate { ip, name: "區網".into(), virtual_adapter: false }],
+        _ => vec![],
+    }
+}
+
+/// Windows PowerShell 5.1 writes stdout in the console code page (cp950 on zh-TW), so adapter
+/// names like 「乙太網路」 are not UTF-8 and the whole list failed to parse. Escape every
+/// non-ASCII character as a JSON `\uXXXX` inside PowerShell: the output is pure ASCII on any
+/// locale and serde restores the names exactly.
+#[cfg(windows)]
+const PS_LIST_IPV4: &str = r"$j = Get-NetIPAddress -AddressFamily IPv4 | Select-Object InterfaceAlias,IPAddress | ConvertTo-Json -Compress; [regex]::Replace([string]$j, '[^\x00-\x7F]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })";
+
+static LAN_CACHE: Mutex<Option<(Instant, Vec<LanCandidate>)>> = Mutex::new(None);
+const LAN_CACHE_TTL: Duration = Duration::from_secs(30);
+
+/// Private IPv4 addresses of this machine (cached 30 s: PowerShell takes about a second to
+/// start, and the settings page and the QR image both ask).
+pub async fn lan_candidates() -> Vec<LanCandidate> {
+    if let Some((at, v)) = LAN_CACHE.lock().unwrap().clone() {
+        if at.elapsed() < LAN_CACHE_TTL {
+            return v;
+        }
+    }
+    let list = discover_lan_candidates().await;
+    *LAN_CACHE.lock().unwrap() = Some((Instant::now(), list.clone()));
+    list
+}
+
+async fn discover_lan_candidates() -> Vec<LanCandidate> {
+    let default = lan_ip();
+    #[cfg(windows)]
+    {
+        let mut command = agora_core::provider::proc::command(Path::new("powershell.exe"));
+        command.args(["-NoProfile", "-NonInteractive", "-Command", PS_LIST_IPV4]);
+        if let Ok(Ok(output)) = tokio::time::timeout(Duration::from_secs(5), command.output()).await {
+            if output.status.success() {
+                let candidates = parse_windows_lan_candidates(&output.stdout);
+                if !candidates.is_empty() {
+                    return candidates;
+                }
+            }
+        }
+    }
+    fallback_lan_candidates(default)
+}
+
 /// `(tailscale IPv4, MagicDNS name)` when the Tailscale CLI is installed and up.
 pub async fn tailscale_info() -> Option<(String, Option<String>)> {
     let exe = agora_core::provider::resolve::find_in_path(&["tailscale.exe", "tailscale"]).or_else(|| {
@@ -253,5 +374,63 @@ mod tests {
     fn cookie_parsing() {
         let m = h(&[("cookie", "a=1; agora_token=abc; b=2")]);
         assert_eq!(cookie_token(&m).as_deref(), Some("abc"));
+    }
+
+    fn candidate(ip: &str, name: &str) -> LanCandidate {
+        LanCandidate { ip: ip.parse().unwrap(), name: name.into(), virtual_adapter: is_virtual_adapter(name) }
+    }
+
+    #[test]
+    fn parses_single_windows_address() {
+        assert_eq!(parse_windows_lan_candidates(br#"{"InterfaceAlias":"Wi-Fi","IPAddress":"192.168.1.8"}"#), vec![candidate("192.168.1.8", "Wi-Fi")]);
+    }
+
+    #[test]
+    fn parses_array_and_filters_non_private_addresses() {
+        let candidates = parse_windows_lan_candidates(br#"[{"InterfaceAlias":"Ethernet","IPAddress":"10.0.0.2"},{"InterfaceAlias":"vEthernet (WSL)","IPAddress":"172.24.0.1"},{"InterfaceAlias":"Public","IPAddress":"8.8.8.8"},{"InterfaceAlias":"Link","IPAddress":"169.254.1.2"}]"#);
+        assert_eq!(candidates, vec![candidate("10.0.0.2", "Ethernet"), candidate("172.24.0.1", "vEthernet (WSL)")]);
+        assert!(candidates[1].virtual_adapter);
+    }
+
+    #[test]
+    fn ascii_escaped_chinese_adapter_names_round_trip() {
+        // Adapter names measured on a zh-TW machine: 乙太網路, 區域連線* 10, 藍牙網路連線.
+        let json = r#"[{"InterfaceAlias":"乙太網路","IPAddress":"192.168.1.20"},{"InterfaceAlias":"區域連線* 10","IPAddress":"192.168.137.1"},{"InterfaceAlias":"藍牙網路連線","IPAddress":"10.1.2.3"},{"InterfaceAlias":"Wi-Fi","IPAddress":"192.168.50.7"}]"#;
+        // Escape exactly as PS_LIST_IPV4 does: every non-ASCII char → backslash, 'u', 4 hex digits.
+        let backslash = char::from(92u8);
+        let out: String = json.chars().map(|ch| if ch.is_ascii() { ch.to_string() } else { format!("{backslash}u{:04x}", ch as u32) }).collect();
+        assert!(out.is_ascii());
+        let c = parse_windows_lan_candidates(out.as_bytes());
+        assert_eq!(c.iter().map(|x| (x.name.as_str(), x.virtual_adapter)).collect::<Vec<_>>(), vec![("乙太網路", false), ("區域連線* 10", true), ("藍牙網路連線", true), ("Wi-Fi", false)]);
+        assert!(parse_windows_lan_candidates(&[0xa5, 0xd2, 0xa4, 0xd3]).is_empty(), "raw cp950 bytes are not UTF-8: the reason for the escaping");
+    }
+
+    #[test]
+    fn virtual_adapter_markers() {
+        for v in ["vEthernet (Default Switch)", "VMware Network Adapter VMnet8", "Local Area Connection* 10", "區域連線* 1", "Bluetooth Network Connection", "Tailscale", "Loopback Pseudo-Interface 1"] {
+            assert!(is_virtual_adapter(v), "{v}");
+        }
+        for p in ["Wi-Fi", "乙太網路", "Ethernet 2", "區域連線", "Local Area Connection"] {
+            assert!(!is_virtual_adapter(p), "{p}");
+        }
+    }
+
+    #[test]
+    fn empty_and_malformed_windows_output_are_ignored() {
+        assert!(parse_windows_lan_candidates(b"").is_empty());
+        assert!(parse_windows_lan_candidates(&[0xff, 0xfe]).is_empty());
+        assert!(parse_windows_lan_candidates(b"not json").is_empty());
+    }
+
+    #[test]
+    fn selection_keeps_only_virtual_candidate() {
+        let candidates = vec![candidate("172.24.0.1", "vEthernet (WSL)")];
+        assert_eq!(select_lan_candidate(&candidates, Some("172.24.0.1".parse().unwrap())), Some(candidates[0].clone()));
+    }
+
+    #[test]
+    fn selection_replaces_virtual_default_with_physical_candidate() {
+        let candidates = vec![candidate("172.24.0.1", "vEthernet (WSL)"), candidate("192.168.1.8", "Wi-Fi")];
+        assert_eq!(select_lan_candidate(&candidates, Some("172.24.0.1".parse().unwrap())), Some(candidates[1].clone()));
     }
 }

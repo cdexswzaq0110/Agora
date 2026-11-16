@@ -718,3 +718,131 @@ button.more-link:hover { color: var(--ink); text-decoration: underline; }
   details.brief > summary, .plan-box > summary { min-height: 44px; padding-block: 0.7rem; box-sizing: border-box; }
   .log-box > summary { min-height: 44px; display: flex; align-items: center; }
 }
+
+/* v0.4 · P7: h1 is a programmatic focus target after a route change (main.js focusHeading), not a control */
+#view h1[tabindex="-1"]:focus { outline: none; }
+/* keyboard users still get a cue that does not change the layout */
+#view h1[tabindex="-1"]:focus-visible { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 0.22em; }
+
+/* ---------------------------------------------------------- v0.4 · digest (B, C, D) */
+.digest-hero .toolbar select { min-height: 2.4rem; }
+.digest-meta { display: flex; flex-wrap: wrap; gap: 0.3rem 1.2rem; align-items: baseline; font-size: 0.88rem; }
+.compare-line b { color: var(--ink); }
+.digest-layout { display: grid; grid-template-columns: 13rem minmax(0, 1fr); grid-template-areas: "toc main"; gap: 2rem; padding-top: 1.2rem; }
+.digest-toc { grid-area: toc; position: sticky; top: calc(var(--topbar-h, 2.6rem) + 1rem); align-self: start; max-height: calc(100vh - var(--topbar-h, 2.6rem) - 2rem); overflow: auto; }
+.digest-toc h3 { margin: 0 0 0.6rem; font: 600 0.66rem/1 var(--font-display); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+.digest-toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.15rem; }
+.digest-toc a { display: block; padding: 0.35rem 0.5rem; border-left: 2px solid var(--hair); color: var(--text); text-decoration: none; font-size: 0.84rem; }
+.digest-toc a:hover, .digest-toc a:focus-visible { border-left-color: var(--ink); color: var(--ink); background: var(--surface); }
+.digest-main { grid-area: main; min-width: 0; display: grid; gap: 1rem; align-content: start; }
+.digest-main h2[id], .all-items { scroll-margin-top: calc(var(--topbar-h, 2.6rem) + 1rem); }
+.toc-select { display: none; }
+.sources-row { margin: 0; }
+.items-head { margin: 0; }
+.items-toggle { width: 100%; text-align: left; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 0.9rem; padding: 0.85rem 1rem; border: 1px solid var(--line); background: var(--paper); color: var(--ink); cursor: pointer; font: 600 1rem/1.3 var(--font-display); }
+.items-toggle::before { content: "▸"; color: var(--muted); }
+.items-toggle[aria-expanded="true"]::before { content: "▾"; }
+.items-toggle .muted { font: 400 0.8rem/1.3 var(--font-body); }
+.items-toggle:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+#itemsList { padding-top: 0.9rem; display: grid; gap: 0.9rem; }
+.list-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.2rem; }
+.trends { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.15rem 0 0.1rem; }
+.trend { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.12rem 0.45rem; border: 1px solid currentColor; font: 600 0.7rem/1.3 var(--font-body); }
+.trend.new { color: var(--gpt); }
+.trend.rising { color: var(--claude); }
+.trend.streak { color: var(--muted); }
+
+/* ---------------------------------------------------------- v0.4 · usage */
+.demo-providers { margin-top: 1rem; border: 1px dashed var(--line); padding: 0.6rem 0.9rem; font-size: 0.88rem; }
+.demo-providers summary { cursor: pointer; color: var(--muted); }
+.demo-providers ul { list-style: none; margin: 0.6rem 0 0; padding: 0; display: grid; gap: 0.35rem; }
+.demo-providers li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 0.8rem; }
+
+/* ---------------------------------------------------------- v0.4 · plan section comments (F) + memory (G) */
+.comment-btn { margin-left: 0.6rem; vertical-align: middle; border: 1px solid var(--line); background: var(--paper); color: var(--muted); cursor: pointer; font: 600 0.66rem/1 var(--font-display); letter-spacing: 0.1em; padding: 0.3rem 0.5rem; }
+.comment-btn:hover, .comment-btn:focus-visible { color: var(--ink); border-color: var(--ink); }
+.comment-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.comment-editor { border-left: 3px solid var(--ink); background: var(--surface); padding: 0.7rem 0.8rem; margin: 0.4rem 0 0.9rem; display: grid; gap: 0.5rem; }
+.comment-editor textarea { min-height: 4.5rem; }
+.comment-list { display: grid; gap: 0.4rem; }
+.comment-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.45rem; }
+.comment-list li { display: grid; gap: 0.15rem; padding: 0.45rem 0.6rem; border-left: 2px solid var(--ink); background: var(--surface); font-size: 0.84rem; }
+.comment-list li.stale { border-left-color: var(--warn); }
+.comment-list li .link { justify-self: start; }
+.stale-note { color: var(--warn); font-size: 0.76rem; }
+.comment-text { white-space: pre-wrap; word-break: break-word; }
+.memory-suggest { border-top: 1px solid var(--hair); padding-top: 0.8rem; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 0.5rem 0.8rem; }
+.memory-suggest .mem-preview { grid-column: 1 / -1; margin: 0; font: 0.76rem/1.4 var(--font-mono); word-break: break-word; }
+
+/* ---------------------------------------------------------- v0.4 · nav dot, shortcuts dialog */
+.nav .new-dot { display: inline-block; width: 0.45rem; height: 0.45rem; margin-left: 0.3rem; border-radius: 50%; background: #e0a458; vertical-align: 0.35em; }
+.foot button { min-height: 0; }
+dialog.shortcuts-dialog { border: 1px solid var(--ink); background: var(--paper); color: var(--text); padding: 1.3rem 1.4rem; max-width: min(30rem, calc(100vw - 2rem)); }
+dialog.shortcuts-dialog::backdrop { background: rgb(0 0 0 / 0.45); }
+dialog.shortcuts-dialog h2 { margin: 0 0 0.8rem; font: 600 1.1rem/1.3 var(--font-display); color: var(--ink); }
+.sc-list { display: grid; grid-template-columns: auto 1fr; gap: 0.45rem 1rem; margin: 0 0 1rem; }
+.sc-list dt { white-space: nowrap; }
+.sc-list dd { margin: 0; }
+kbd { display: inline-block; min-width: 1.4em; padding: 0.1rem 0.35rem; border: 1px solid var(--line); border-bottom-width: 2px; background: var(--canvas); font: 600 0.78rem/1.2 var(--font-mono); text-align: center; }
+
+/* ---------------------------------------------------------- v0.4 · phones: bottom nav (E) */
+@media (max-width: 980px) {
+  .digest-layout { grid-template-columns: 1fr; grid-template-areas: "main"; }
+  .digest-toc { display: none; }
+  .toc-select { display: block; }
+  .toc-select select { width: 100%; min-height: 44px; }
+}
+@media (max-width: 760px) {
+  /* One stacking order for everything pinned to the bottom (red-team #11):
+     bottom nav 25 < sheets/menus 30 < toast 50 < <dialog> (top layer). */
+  :root { --bottomnav-h: calc(58px + env(safe-area-inset-bottom)); }
+  body.kb-open { --bottomnav-h: 0px; }
+  .topbar { grid-template-columns: auto 1fr; }
+  .nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 25; display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; background: #111111; border-top: 1px solid #333; padding-bottom: env(safe-area-inset-bottom); grid-column: auto; grid-row: auto; }
+  .nav a { min-height: 58px; justify-content: center; align-items: center; border-bottom: 0; border-top: 3px solid transparent; font-size: 0.78rem; letter-spacing: 0.1em; }
+  .nav a.active { border-top-color: #ffffff; border-bottom: 0; }
+  body.kb-open .nav { display: none; }
+  main { padding-bottom: calc(var(--bottomnav-h) + 2.5rem); }
+  .foot { padding-bottom: calc(var(--bottomnav-h) + 1rem); }
+  .interject { bottom: var(--bottomnav-h); z-index: 16; }
+  .more-menu .menu { bottom: calc(var(--bottomnav-h) + 0.75rem); z-index: 30; }
+  .toast { bottom: calc(var(--bottomnav-h) + 0.8rem); }
+  .memory-suggest { grid-template-columns: 1fr; }
+  .comment-btn { min-height: 44px; min-width: 44px; }
+  .items-toggle { min-height: 44px; }
+}
+
+/* ---------------------------------------------------------- v0.4 · phone connect (GPT) + settings (D) */
+.pair-error { margin: 0; color: var(--bad); font-size: 0.9rem; }
+.phone-connect select, .phone-connect .btn, .phone-connect .check { min-height: 2.75rem; }
+.troubleshoot { margin: 0; padding-left: 1.2rem; color: var(--muted); font-size: 0.86rem; display: grid; gap: 0.35rem; }
+.chip.now { text-transform: none; letter-spacing: 0.02em; font-weight: 600; color: var(--ok); border-color: var(--ok); }
+.settings-layout { display: grid; grid-template-columns: 12rem minmax(0, 1fr); gap: 2rem; }
+.settings-toc { position: sticky; top: calc(var(--topbar-h, 2.6rem) + 1rem); align-self: start; padding-top: 2.4rem; }
+.settings-toc h3 { margin: 0 0 0.6rem; font: 600 0.66rem/1 var(--font-display); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+.settings-toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.15rem; }
+.settings-toc a { display: block; padding: 0.35rem 0.5rem; border-left: 2px solid var(--hair); color: var(--text); text-decoration: none; font-size: 0.84rem; }
+.settings-toc a:hover, .settings-toc a:focus-visible { border-left-color: var(--ink); color: var(--ink); background: var(--surface); }
+.settings-main { min-width: 0; }
+.settings-main .block { scroll-margin-top: calc(var(--topbar-h, 2.6rem) + 1rem); }
+.dirty-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; align-items: center; gap: 0.8rem; padding: 0.7rem max(var(--gutter), calc((100% - var(--content)) / 2 + var(--gutter))); padding-bottom: max(0.7rem, env(safe-area-inset-bottom)); background: var(--paper); border-top: 2px solid var(--ink); box-shadow: 0 -6px 18px rgb(0 0 0 / 0.08); font-size: 0.9rem; }
+.dirty-bar.error { border-top-color: var(--bad); }
+.dirty-bar.error #dirtyText { color: var(--bad); }
+@media (max-width: 980px) {
+  .settings-layout { grid-template-columns: 1fr; }
+  .settings-toc { display: none; }
+}
+@media (max-width: 760px) {
+  .dirty-bar { bottom: var(--bottomnav-h, 0px); padding-bottom: 0.7rem; }
+  .dirty-bar .btn { min-height: 44px; }
+  /* Measured at 375px: nowrap block titles and long copyable paths widened the whole page,
+     which also pushed the fixed bottom nav off screen. */
+  .block-head { flex-wrap: wrap; }
+  .block-head h2 { white-space: normal; flex: 1 1 12rem; min-width: 0; }
+  .block-head .aside { flex-basis: 100%; margin-left: 0; white-space: normal; direction: ltr; text-align: left; }
+  .copyable { display: inline-block; max-width: 100%; white-space: pre-wrap; word-break: break-all; }
+  /* 44px touch targets for every remaining form control */
+  #view input:not([type="checkbox"]):not([type="radio"]), #view select { min-height: 44px; }
+  .slot-x { min-width: 44px; min-height: 44px; }
+  #view details:not(.more-menu) > summary { min-height: 44px; padding-block: 0.7rem; box-sizing: border-box; }
+}

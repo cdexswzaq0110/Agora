@@ -151,6 +151,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/experiments", get(list_experiments).post(start_experiment))
         .route("/api/experiments/{id}", get(get_experiment))
         .route("/api/digests", get(list_digests))
+        .route("/api/digests/state", get(digest_state))
+        .route("/api/digests/{date}/read", post(mark_digest_read))
         .route("/api/digests/run", post(run_digest))
         .route("/api/digests/{date}", get(get_digest))
         .route("/api/schedules", get(list_schedules).post(save_schedule))
@@ -364,8 +366,20 @@ async fn cancel(State(st): State<AppState>, Path(id): Path<String>) -> Json<Valu
     Json(json!({ "ok": st.engine.cancel(&id).await }))
 }
 
-async fn remember(State(st): State<AppState>, Path(id): Path<String>) -> ApiResult<Value> {
-    Ok(Json(json!(st.engine.remember(&id).await?)))
+/// Body is optional: empty or `{}` keeps the pre-v0.4 line; `{"line": "…"}` stores the user's
+/// (edited) sentence. Read raw so a body-less POST never fails before reaching the handler.
+async fn remember(State(st): State<AppState>, Path(id): Path<String>, body: axum::body::Bytes) -> ApiResult<Value> {
+    let line = if body.iter().all(u8::is_ascii_whitespace) {
+        None
+    } else {
+        let v: Value = serde_json::from_slice(&body).map_err(|_| ApiError::bad("需要 JSON"))?;
+        match v.get("line") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(_) => return Err(ApiError::bad("line 需要是字串")),
+        }
+    };
+    Ok(Json(json!(st.engine.remember(&id, line.as_deref()).await?)))
 }
 
 fn sse_json(v: &impl serde::Serialize) -> SseEvent {
@@ -416,6 +430,7 @@ async fn get_settings(State(st): State<AppState>) -> Json<Value> {
         "claude_path": s.claude_path,
         "codex_path": s.codex_path,
         "default_models": s.default_models,
+        "default_efforts": s.default_efforts,
         "unsupported_models": s.unsupported_models,
         "quota_stop_percent": s.quota_stop_percent,
         "demo_mode": s.demo_mode,
@@ -436,7 +451,34 @@ fn opt_string(v: &Value) -> Option<String> {
 
 async fn patch_settings(State(st): State<AppState>, Json(b): Json<Value>) -> Result<Json<Value>, ApiError> {
     let obj = b.as_object().ok_or_else(|| ApiError::bad("需要 JSON 物件"))?.clone();
+    // Reject malformed values up front instead of silently dropping them inside the update.
+    let mut efforts: Vec<(String, Option<agora_core::Effort>)> = Vec::new();
+    if let Some(v) = obj.get("default_efforts") {
+        let m = v.as_object().ok_or_else(|| ApiError::bad("default_efforts 需要是物件"))?;
+        for (pid, e) in m {
+            match opt_string(e) {
+                None => efforts.push((pid.clone(), None)),
+                Some(name) => match agora_core::Effort::parse(&name) {
+                    Some(x) => efforts.push((pid.clone(), Some(x))),
+                    None => return Err(ApiError::bad(format!("不認得的推理強度：{name}"))),
+                },
+            }
+        }
+    }
+    if let Some(v) = obj.get("digest") {
+        serde_json::from_value::<agora_core::digest::DigestSettings>(v.clone()).map_err(|e| ApiError::bad(format!("情報設定格式錯誤：{e}")))?;
+    }
     st.engine.update_settings(|s| {
+        for (pid, e) in &efforts {
+            match e {
+                Some(x) => {
+                    s.default_efforts.insert(pid.clone(), *x);
+                }
+                None => {
+                    s.default_efforts.remove(pid);
+                }
+            }
+        }
         for (k, v) in &obj {
             match k.as_str() {
                 "claude_path" => s.claude_path = opt_string(v),
@@ -516,7 +558,8 @@ async fn pairing_info(State(st): State<AppState>) -> Json<Value> {
     let (code, expires_at) = st.pairing.current();
     let s = st.engine.settings();
     let lan_port = st.lan_port().await;
-    let lan_ip = auth::lan_ip();
+    let lan_candidates = auth::lan_candidates().await;
+    let selected_lan = auth::select_lan_candidate(&lan_candidates, auth::lan_ip());
     let ts = auth::tailscale_info().await;
     Json(json!({
         "code": code,
@@ -525,7 +568,8 @@ async fn pairing_info(State(st): State<AppState>) -> Json<Value> {
         "lan_enabled": s.lan_enabled,
         "lan_running": lan_port.is_some(),
         "lan_port": s.lan_port,
-        "lan_url": lan_ip.zip(lan_port).map(|(ip, p)| format!("http://{ip}:{p}/")),
+        "lan_url": selected_lan.as_ref().zip(lan_port).map(|(candidate, p)| format!("http://{}:{p}/", candidate.ip)),
+        "lan_candidates": lan_candidates,
         "tailscale": ts.map(|(ip, dns)| json!({
             "ip": ip,
             "dns": dns,

@@ -132,6 +132,29 @@ export function providerOptions(selected, { allowEmpty = '' } = {}) {
   return (allowEmpty ? `<option value="">${esc(allowEmpty)}</option>` : '') + opts;
 }
 
+export const EFFORT_ZH = { low: '低', medium: '中', high: '高', xhigh: '很高', max: '最高', ultra: '極限' };
+
+/**
+ * Efforts a provider/model accepts — the same rule as the server's `supported_efforts`:
+ * the model's entry, else the CLI-default entry (`id: ""`, the intersection of all models).
+ */
+export function effortsFor(pid, model) {
+  const p = providerById(pid);
+  if (!p) return { list: [], def: null };
+  const m = p.models.find((x) => x.id === (model || '')) || p.models.find((x) => x.id === '');
+  return { list: m?.efforts || [], def: m?.default_effort || null };
+}
+
+/** "模型預設（low）" only when the CLI reports that model's default; otherwise say so. */
+export function effortOptions(pid, model, selected) {
+  const p = providerById(pid);
+  const { list, def } = effortsFor(pid, model);
+  if (!list.length) return '<option value="">這個模型無法調整</option>';
+  const known = def && (model || p?.mock);
+  return `<option value="">${known ? `模型預設（${esc(def)}）` : '模型預設（由 CLI 決定）'}</option>`
+    + list.map((e) => `<option value="${esc(e)}"${e === selected ? ' selected' : ''}>${esc(e)}（${esc(EFFORT_ZH[e] || e)}）</option>`).join('');
+}
+
 export function modelOptions(pid, selected) {
   const p = providerById(pid);
   if (!p) return '';

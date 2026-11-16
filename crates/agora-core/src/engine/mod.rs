@@ -67,8 +67,16 @@ pub enum GateDecision {
         #[serde(default)]
         verify_command: Option<String>,
     },
-    /// Send the plan back to the synthesizer with feedback.
-    Revise { feedback: String },
+    /// Send the plan back to the synthesizer with feedback and/or section comments. Comments
+    /// carry the plan revision they were written against (`plan_revision`).
+    Revise {
+        #[serde(default)]
+        feedback: String,
+        #[serde(default)]
+        comments: Vec<PlanComment>,
+        #[serde(default)]
+        plan_revision: Option<u32>,
+    },
     /// Keep the plan, do not implement.
     Reject {
         #[serde(default)]
@@ -84,6 +92,7 @@ pub struct ProviderInfo {
     pub mock: bool,
     pub models: Vec<ModelOption>,
     pub default_model: Option<String>,
+    pub default_effort: Option<Effort>,
     pub unsupported_models: Vec<String>,
     pub health: Option<Health>,
     pub quota: Option<QuotaSnapshot>,
@@ -223,6 +232,7 @@ impl Engine {
                 mock: p.is_mock(),
                 models: p.models(),
                 default_model: s.default_models.get(p.id()).cloned(),
+                default_effort: s.default_efforts.get(p.id()).copied(),
                 unsupported_models: s.unsupported_models.get(p.id()).cloned().unwrap_or_default(),
                 health: health.get(p.id()).cloned(),
                 quota: quotas.get(p.id()).cloned(),
@@ -370,10 +380,25 @@ impl Engine {
     }
 
     /// Append a finished session's verdict to its project's memory.
-    pub async fn remember(&self, session_id: &str) -> Result<Project> {
+    /// Append one line to the project memory. `custom` is the user's (possibly edited)
+    /// sentence: newlines removed, ≤ 300 chars, never empty; it keeps the `- [date] …【grade】`
+    /// shape so the memory file stays uniform. `None` keeps the pre-v0.4 line.
+    pub async fn remember(&self, session_id: &str, custom: Option<&str>) -> Result<Project> {
         let rec = self.session(session_id).await.ok_or_else(|| anyhow!("找不到議題"))?;
         let v = rec.verdict.as_ref().ok_or_else(|| anyhow!("這個議題還沒有結論"))?;
         let project = self.project(&rec.spec.project_id).ok_or_else(|| anyhow!("找不到專案"))?;
+        if let Some(c) = custom {
+            let one = c.split_whitespace().collect::<Vec<_>>().join(" ");
+            if one.is_empty() {
+                bail!("要存入記憶的句子是空的");
+            }
+            if one.chars().count() > 300 {
+                bail!("要存入記憶的句子太長（上限 300 字）");
+            }
+            let line = format!("- [{}] {one}【{}】", format_date(rec.created_at), v.grade.label());
+            let memory = if project.memory.trim().is_empty() { line } else { format!("{}\n{line}", project.memory.trim_end()) };
+            return self.update_project(&project.id, None, None, Some(memory));
+        }
         let line = format!(
             "- [{}] {}（{}）：{}【{}】",
             format_date(rec.created_at),
@@ -479,6 +504,23 @@ impl Engine {
                 bail!("找不到模型提供者：{}", p.provider);
             }
             p.model = p.model.take().map(|m| m.trim().to_string()).filter(|m| !m.is_empty());
+            // An explicit effort must be one this provider/model lists — a 400, never a silent
+            // downgrade (templates, schedules, experiments and MCP all come through here).
+            if let (Some(e), Some(prov)) = (p.effort, self.provider(&p.provider)) {
+                let ok = crate::provider::supported_efforts(&prov.models(), p.model.as_deref());
+                if !ok.contains(&e) {
+                    let which = p.model.clone().unwrap_or_else(|| "CLI 預設模型".into());
+                    if ok.is_empty() {
+                        bail!("{}（{which}）無法調整推理強度，請改回「模型預設」", prov.display_name());
+                    }
+                    bail!(
+                        "{}（{which}）不支援推理強度「{}」；可用：{}",
+                        prov.display_name(),
+                        e.as_str(),
+                        ok.iter().map(|x| x.as_str()).collect::<Vec<_>>().join("、")
+                    );
+                }
+            }
         }
         let n = spec.participants.len();
         let same_family = |ps: &[Participant]| {
@@ -640,6 +682,7 @@ impl Engine {
             access: Access::ReadOnly,
             timeout: Duration::from_secs(120),
             cancel: CancellationToken::new(),
+            effort: None,
             clean_config: self.settings().isolate_cli_config,
         };
         let handle = tokio::spawn(async move { p.run(req, tx).await });

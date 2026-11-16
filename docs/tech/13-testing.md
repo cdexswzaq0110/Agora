@@ -4,7 +4,7 @@
 cargo test --workspace
 ```
 
-離線執行，不呼叫任何 CLI，不花額度。目前 88 個測試通過，另有 1 個需要網路的探測測試預設略過。
+離線執行，不呼叫任何 CLI，不花額度。目前 112 個測試通過（v0.4），另有 1 個需要網路的探測測試預設略過。前端另用 `node scripts/check-web.mjs` 檢查 module 語法、具名 import 與離線快取清單。
 
 ## 原則（來自 Agent Kernel 的 core rules）
 

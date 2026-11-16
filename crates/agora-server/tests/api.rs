@@ -237,3 +237,52 @@ fn mcp_server_handshake_and_tool_list() {
     drop(stdin);
     let _ = child.wait();
 }
+
+
+#[tokio::test]
+async fn v04_remember_bodies_digest_state_and_pairing_rules() {
+    let st = state();
+    let (_, _, projects) = call(app(&st, LOCAL), get("/api/projects", "127.0.0.1:4717")).await;
+    let pid = projects[0]["id"].as_str().unwrap().to_string();
+    let (_, _, rec) = call(app(&st, LOCAL), post("/api/sessions", "127.0.0.1:4717", json!({"project_id": pid, "mode": "solo", "participants": [{"provider": "mock-claude"}], "prompt": "記憶"}))).await;
+    let id = rec["id"].as_str().unwrap().to_string();
+    for _ in 0..200 {
+        let (_, _, v) = call(app(&st, LOCAL), get(&format!("/api/sessions/{id}"), "127.0.0.1:4717")).await;
+        if v["status"] != "running" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let path = format!("/api/sessions/{id}/remember");
+    // An empty JSON request (pre-v0.4 clients) still works. A POST without the JSON content
+    // type never gets here: the CSRF guard answers 415 first.
+    let req = Request::post(&path)
+        .header(header::HOST, "127.0.0.1:4717")
+        .header(header::ORIGIN, "http://127.0.0.1:4717")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::empty())
+        .unwrap();
+    let (s, _, v) = call(app(&st, LOCAL), req).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, _, _) = call(app(&st, LOCAL), post(&path, "127.0.0.1:4717", json!({}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _, v) = call(app(&st, LOCAL), post(&path, "127.0.0.1:4717", json!({"line": "一句\n話"}))).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(v["memory"].as_str().unwrap().lines().last().unwrap().contains("] 一句 話【"));
+    for bad in [json!({"line": "\n\n"}), json!({"line": "長".repeat(301)}), json!({"line": 3})] {
+        let (s, _, _) = call(app(&st, LOCAL), post(&path, "127.0.0.1:4717", bad)).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+    }
+
+    let (s, _, v) = call(app(&st, LOCAL), get("/api/digests/state", "127.0.0.1:4717")).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["unread"], false);
+    let (s, _, _) = call(app(&st, LOCAL), post("/api/digests/2026-11-16/read", "127.0.0.1:4717", json!({"generated_at": 1}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "no such digest version");
+
+    // Unpaired devices get nothing from the new endpoints.
+    let (s, _, _) = call(app(&st, PHONE), get("/api/digests/state", "192.168.1.5:4718")).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    let (s, _, _) = call(app(&st, PHONE), post(&path, "192.168.1.5:4718", json!({"line": "x"}))).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+}

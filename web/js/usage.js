@@ -16,13 +16,14 @@ export function setQuotaInUsage(q) {
 }
 
 export async function renderUsage() {
-  view().innerHTML = `<section class="hero small">
+  view().innerHTML = `<section class="hero compact">
       <p class="eyebrow">Usage · 剩餘用量</p>
-      <h1 class="display zh">還剩多少額度</h1>
+      <h1 class="display small zh" tabindex="-1">還剩多少額度</h1>
       <p class="lede">數字直接來自 CLI，不經過任何第三方：Codex 由本機 app-server 免費查詢；Claude 從每次執行附帶的額度事件取得，所以要跑過一次才有數字。</p>
       <div class="toolbar"><button class="btn small" type="button" id="refreshAll">重新檢查全部</button><span class="muted" style="font-size:.85rem">每 5 分鐘自動更新</span></div>
     </section>
     <div class="usage-grid" id="usageGrid"></div>
+    <div id="demoProviders"></div>
     <section class="block">
       <div class="block-head"><span class="index">01 / Trend</span><h2>額度走勢（過去 7 天）</h2><span class="aside">已用比例，越高越接近上限</span></div>
       <div class="chart-row" id="trend"></div>
@@ -56,7 +57,16 @@ export async function renderUsage() {
 function paintCards() {
   const grid = $('#usageGrid');
   if (!grid) return;
-  const list = [...S.providers].sort((a, b) => Number(a.mock) - Number(b.mock));
+  // Real CLIs get the full cards; offline demo models are folded into one quiet row.
+  const list = S.providers.filter((p) => !p.mock);
+  const demo = S.providers.filter((p) => p.mock);
+  const demoBox = $('#demoProviders');
+  if (demoBox) {
+    demoBox.innerHTML = demo.length ? `<details class="demo-providers"${S.demoOpen ? ' open' : ''}><summary>離線示範模型（${demo.length}）：不呼叫 CLI、不使用額度</summary>
+      <ul>${demo.map((p) => `<li><span class="dot ${p.health?.ok ? 'ok' : ''}" aria-hidden="true"></span><b>${esc(p.name)}</b><span class="muted">${esc(p.health?.summary || '檢查中…')}</span></li>`).join('')}</ul></details>` : '';
+    const d = demoBox.querySelector('details');
+    if (d) d.ontoggle = () => { S.demoOpen = d.open; };
+  }
   grid.innerHTML = list.map((p) => {
     const q = quotaOf(p.id);
     const rem = remaining(q);
