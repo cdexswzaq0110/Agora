@@ -9,8 +9,12 @@
 mod modes;
 mod ops;
 mod runner;
+mod assistant;
+mod team_ops;
 
+pub use assistant::{AssistantAnswer, AssistantError};
 pub use ops::Experiment;
+pub use team_ops::{NewWorkflow, OverCap};
 
 use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
@@ -108,7 +112,11 @@ pub struct Engine {
     health: RwLock<HashMap<String, Health>>,
     last_samples: std::sync::Mutex<HashMap<String, QuotaSample>>,
     digest_running: AtomicBool,
+    assistant_running: AtomicBool,
     digest_last_attempt: std::sync::Mutex<Option<u64>>,
+    /// 專案團隊: held around every workflow read-modify-write ("check + start session + record
+    /// it" is one step, red-team #4).
+    workflow_lock: Mutex<()>,
 }
 
 pub(crate) fn now_secs() -> u64 {
@@ -156,9 +164,12 @@ impl Engine {
             health: RwLock::new(HashMap::new()),
             last_samples: std::sync::Mutex::new(HashMap::new()),
             digest_running: AtomicBool::new(false),
+            assistant_running: AtomicBool::new(false),
             digest_last_attempt: std::sync::Mutex::new(None),
+            workflow_lock: Mutex::new(()),
         };
         e.recover_interrupted();
+        e.reconcile_workflows_at_startup();
         Ok(Arc::new(e))
     }
 
@@ -462,6 +473,9 @@ impl Engine {
             r.updated_at = now_ms();
             let _ = self.store.save_session(&r);
             self.emit(Event::Status { session_id: r.id.clone(), title: r.title.clone(), status: r.status, error: None });
+            if let Some(st) = &r.spec.stage {
+                self.sync_workflow(&st.workflow_id).await;
+            }
             return true;
         }
         false
@@ -552,6 +566,19 @@ impl Engine {
                 }
                 spec.participants.truncate(4);
             }
+            Mode::Workshop if spec.stage.is_some() => {
+                // A team stage: participants come from the stage plan, never truncated; always
+                // plan-only and read-only, gated by you (red-team #6).
+                let st = spec.stage.as_ref().unwrap();
+                if st.producers.is_empty() || st.producers.iter().chain(st.integrator.iter()).any(|c| self.provider(&c.participant.provider).is_none()) {
+                    bail!("團隊階段的成員設定不完整");
+                }
+                spec.plan_only = true;
+                spec.red_team = false;
+                spec.auto_approve = false;
+                spec.access = Access::ReadOnly;
+                spec.seed = None;
+            }
             Mode::Workshop => {
                 if n == 0 {
                     bail!("方案工作坊需要至少一位提案者");
@@ -584,6 +611,7 @@ impl Engine {
             Mode::Relay => 2 * rounds + 2,
             Mode::Roundtable => n * rounds + 1,
             Mode::Debate => 2 * rounds + 2,
+            Mode::Workshop if spec.stage.is_some() => spec.stage.as_ref().map_or(1, |st| st.calls() as u32) + MAX_PLAN_REVISIONS,
             Mode::Workshop => {
                 let planning = 2 * n + 1 + if spec.red_team { 2 } else { 0 } + MAX_PLAN_REVISIONS;
                 planning + if spec.plan_only { 0 } else { 2 * rounds + 2 }
@@ -593,6 +621,14 @@ impl Engine {
     }
 
     pub async fn start(self: &Arc<Self>, spec: SessionSpec) -> Result<SessionRecord> {
+        if spec.stage.is_some() {
+            bail!("團隊階段只能從專案團隊的工作流開始");
+        }
+        self.start_session(spec).await
+    }
+
+    /// `start` without the public-API guard: the workflow engine starts team stages here.
+    pub(crate) async fn start_session(self: &Arc<Self>, spec: SessionSpec) -> Result<SessionRecord> {
         let (spec, project, notes) = self.validate(spec)?;
         let title = spec
             .title

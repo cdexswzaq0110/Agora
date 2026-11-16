@@ -60,7 +60,7 @@ v0.3 的介面改版是先讓 Claude 與 GPT 各自提案、互評、整合，�
    - `delta` 依 `seq` 去重：伺服器先訂閱再取快照，所以兩者之間的事件可能重複收到。
    - 結構性的變化（發言開始或結束、階段、方案、結論……）排一次整頁重繪。
    - 文字片段只重繪那一則發言和它的一行摘要。
-3. 重繪排程用 `nextFrame()`：`requestAnimationFrame` 加上 250 ms 計時器備援，頁面在背景也會更新（[lessons/0005](../lessons/0005-raf-does-not-fire-in-hidden-pages.md)）。
+3. 重繪排程用 `nextFrame()`（v0.5 起在 `util.js`，議題頁與工作流頁共用）：`requestAnimationFrame` 加上 250 ms 計時器備援，頁面在背景也會更新（[lessons/0005](../lessons/0005-raf-does-not-fire-in-hidden-pages.md)）。
 4. 議題結束時關閉串流；連線中斷時改成抓一次完整紀錄。
 5. 全域串流收到 `hello`（每次連線都會送）、`lagged`，或分頁回到前景時，重新同步待辦與徽章；`refreshAttention` 和 `loadSessions` 都只接受最新一次請求的回應。
 6. 偵錯用：`window.__agora` 可以看到狀態，`window.__agora.evlog` 是最近收到的事件類型。
@@ -104,3 +104,19 @@ node scripts/check-web.mjs
 ```
 
 把 `web/js/*.js` 當 ES module、`web/*.js` 當一般 script 解析；確認每個具名 import 都存在於目標 module 的 export；確認 `sw.js` 快取了每個 module。不要用 `node --check web/js/x.js`：Node 24 上它對 module 裡的語法錯誤也回傳 0（[lessons/0008](../lessons/0008-node-check-misses-esm-syntax-errors.md)）。
+
+## v0.5 專案團隊介面
+
+- `#/team` 由 `js/team.js` 繪製新構想表單、專案工作流清單與 18 個角色名冊；專案選擇與首頁共用 `S.projectId`。
+- `#/w/:id` 顯示五階段進度、唯一下一步、目前角色分工、角色檢查紀錄、核准文件與可交付工作坊的任務。文件內容一律交給 `md()`，其他動態文字一律經 `esc()`。
+- 全域 SSE 的 `workflow` 事件交給 `onWorkflowEvent()`；團隊頁只重載清單，工作流頁以 `nextFrame()` 合併連續事件後重抓資料（v0.5 驗收時原本用裸的 `requestAnimationFrame`：瀏覽器面板裡 rAF 不觸發，第一個畫格永遠排著，之後的事件全被丟掉；改用 `nextFrame()` 後即時更新正常）。即時重繪保留捲動位置及文件 `<details>` 開合狀態，也不主動移動焦點。
+- 團隊階段仍使用一般議題頁核准。`session.js` 只補工作流麵包屑、發言角色標籤，以及「構想收斂」核准前的問題回答欄位，不改既有 SSE 重繪排程。
+
+## 本機擴充（v0.5）
+
+個人內容（例如自己的桌寵角色、助理人設）放在 `web/local/`，被 `.gitignore` 排除，公開的 repo 與 Release 都沒有。
+
+- 伺服器在 `/api/whoami` 回傳 `extensions`：`web/local/<name>.js` 存在於這個建置裡才會列出（`rust-embed` 在編譯時嵌入磁碟上的檔案）。
+- `main.js` 開機後對每個擴充載入 `/local/<name>.css` 與 `import('/local/<name>.js')`，存在 `S.extensions[name]`，呼叫它的 `init()`；設定頁「其他」呼叫 `settingsHtml()` 與 `bindSettings()`。
+- 公開程式碼不 import、不引用任何擴充的檔名；`sw.js` 不快取擴充（擴充需要連線才會載入）；`check-web.mjs` 只檢查 `web/js/`。
+- 助理聊天的人設：`web/local/persona.txt` 存在時替換角色段落，規則與資料邊界固定由伺服器附上。

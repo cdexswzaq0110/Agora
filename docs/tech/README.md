@@ -20,6 +20,7 @@
 | 11 | [前端](11-frontend.md) | 模組分工、即時串流、Markdown、圖表、PWA |
 | 12 | [桌面、手機與 MCP](12-desktop-mobile-mcp.md) | Tauri 外殼、系統匣、Tailscale、在 Claude Code／Codex 裡呼叫 Agora |
 | 13 | [測試策略](13-testing.md) | 測了什麼、怎麼測、哪些只做過實機驗證、哪些還沒驗證 |
+| 14 | [專案團隊工作流](14-team-workflow.md) | 18 個角色怎麼分成每個階段的模型呼叫、怎麼核准與過期、為什麼不會重複開始或多花額度 |
 | — | [講解指南](presentation-guide.md) | 30 秒、3 分鐘、10 分鐘的講法，示範腳本，常見問答 |
 
 ## 相關文件

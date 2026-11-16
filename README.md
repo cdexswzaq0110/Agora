@@ -13,6 +13,15 @@
 
 ---
 
+## v0.5 重點：專案團隊
+
+- **專案團隊**（導覽「團隊」）：寫下一個構想，由 PM、UX、SA、Architect、SD、DBA、Dev、QA、DevOps/SRE、LLM、NLP、AI、系統設計師、系統架構師、資料分析師、ML、MLOps、DL 共 18 個角色，分五個階段替你做事：**構想收斂 → 可行性分析 → 需求與體驗 → 技術設計 → 任務拆分**。每個階段都停下來等你核准；可行性分析可以直接決定「不做」。任務清單核准後，每一項可以一鍵交給方案工作坊實作。
+- **成本看得見**：快速 5 次、標準 9 次（AI 類 11 次）模型呼叫；開始前顯示，超過工作流上限要你確認。每個角色都留下「完整／簡查／不適用」紀錄，缺席的角色標成「缺漏」，不會假裝通過。
+- 上游文件改版時，依據舊版的下游文件自動標成「已過期」；重複點擊不會多開議題；文件可以匯出到專案的 `docs/agora/`。設計與紅隊修訂：[docs/design/2026-11-16-v0.5](docs/design/2026-11-16-v0.5/05-final-plan.md)；技術說明：[docs/tech/14](docs/tech/14-team-workflow.md)。
+- **動態效果與命令面板**（GPT 實作）：參考 [cdexswzaq0110.github.io](https://cdexswzaq0110.github.io/) 的動態語彙；Ctrl／⌘＋K 開命令面板；設定可選自動／開／關，降低動態時全部停用。
+- **本機擴充**：個人的內容（例如自己的桌寵角色、助理人設）放在 本機擴充（`web/local/`，git 忽略，只在自己的電腦）；公開的 repo 與 Release 不包含它們，只有通用的助理聊天 API。
+- **Tailscale**：讀取實際的 `tailscale serve` 設定，只在空的連接埠（443／8443／10000）加上 Agora，不覆蓋你已有的服務。
+
 ## v0.4 重點
 
 - 一樣先讓 Claude 與 GPT 提案、互評、紅隊審視再實作（[docs/design/2026-11-16-v0.4](docs/design/2026-11-16-v0.4/05-final-plan.md)）；手機 QR 連線則直接**分派給 GPT 實作**，Claude 審查後合併。
@@ -35,6 +44,22 @@
 - **每日技術情報**：每天整理 Hacker News、GitHub Trending、Lobsters、Reddit、dev.to、Hugging Face Papers 的熱門項目，產出附來源編號的繁體中文摘要。
 - 另有議題範本、ADR 與 lesson 匯出、額度不足時自動改派、分岔、盲審、檢索式記憶、模式比較、排程議題、QR 配對、語音輸入、用量圖表、MCP server。
 - 文件：[技術文件](docs/tech/README.md)、[開發日誌](docs/devlog/README.md)、[講解指南](docs/tech/presentation-guide.md)。
+
+## 用手機連線
+
+電腦上的 Agora 頁尾有「手機連線」，那裡有逐步說明、QR code 和 6 位數配對碼。
+
+**出門也能用：Tailscale（建議，HTTPS，可以安裝成 App、收通知）**
+
+1. 手機安裝 Tailscale App，登入和電腦**同一個帳號**，打開 App 裡的連線開關。
+2. 電腦也要安裝並登入 Tailscale；在 Agora 的「手機連線」按「啟用 Tailscale 連線」。只會新增一個 HTTPS 連接埠，不會覆蓋你已有的 `tailscale serve` 設定。
+3. 手機相機掃 QR code（或用 Safari／Chrome 打開顯示的 `https://<電腦名稱>.<tailnet>.ts.net…` 網址）。
+4. 輸入配對碼（掃 QR 會自動帶入；10 分鐘內有效）。
+5. iPhone：Safari 分享 →「加入主畫面」；Android：Chrome 選單 →「安裝應用程式」。
+
+**在家：同一個 Wi‑Fi**：在「手機連線」勾選允許區網，Windows 防火牆詢問時在「私人網路」按「允許」，再掃 QR code、輸入配對碼。區網是 HTTP，不能安裝成 App。
+
+打不開時：確認手機的 Tailscale 開關是開的、兩邊是同一個帳號；區網則確認同一個 Wi‑Fi、防火牆已允許，並在網卡清單裡選實體網卡（不要選 vEthernet、WSL、VMware）。
 
 ## 這個專案在解什麼問題
 

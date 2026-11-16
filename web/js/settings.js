@@ -9,6 +9,7 @@
 import { $, $$, api, copyText, esc, rel, stamp, toast } from './util.js';
 import { S, MODES, MODE_ORDER, providerById, modelOptions, providerOptions, pickProvider, loadProviders, effortsFor, EFFORT_ZH } from './state.js';
 import { shortcutsEnabled, setShortcutsEnabled } from './shortcuts.js';
+import { motionSetting, setMotionSetting } from './motion.js';
 
 const view = () => $('#view');
 const SOURCES = [['hn', 'Hacker News'], ['github', 'GitHub Trending'], ['lobsters', 'Lobsters'], ['reddit', 'Reddit'], ['devto', 'dev.to'], ['hf', 'Hugging Face Papers']];
@@ -61,6 +62,7 @@ export async function renderSettings() {
   if (!S.whoami.local) {
     view().innerHTML = `<section class="hero compact"><p class="eyebrow">Settings · 設定</p><h1 class="display small zh" tabindex="-1">這台裝置</h1>
       <p class="lede">已配對為「${esc(S.whoami.device || '手機')}」。模型路徑、保護門檻、排程與配對管理只能在電腦上修改。</p>
+      <p class="muted">想把 Agora 放到主畫面：iPhone 用 Safari 的分享按鈕 →「加入主畫面」；Android 用 Chrome 選單 →「安裝應用程式」。</p>
       <div class="toolbar">${notifyButton()}</div>
       <label class="check"><input type="checkbox" id="setShortcuts"${shortcutsEnabled() ? ' checked' : ''}> 啟用單鍵快捷鍵（? 與 g 系列；只存在這台裝置）</label></section>`;
     bindNotify(renderSettings);
@@ -85,6 +87,7 @@ export async function renderSettings() {
     const [s, pairing, schedules, health] = await Promise.all([api('/api/settings'), api('/api/pairing'), api('/api/schedules'), api('/api/health')]);
     S.settings = s;
     paint(s, pairing, schedules, health);
+    if (location.hash.startsWith('#/settings/phone')) $('#sec-phone')?.scrollIntoView({ block: 'start' });
   } catch (e) { $('#setBody').innerHTML = `<p class="lede">${esc(e.message)}</p>`; }
 }
 
@@ -113,6 +116,41 @@ function scheduleRow(c) {
 
 // ------------------------------------------------------------------ phone (GPT)
 
+/** Numbered, state-aware connection guide: Tailscale (works anywhere, HTTPS) and the same Wi-Fi. */
+/** Settings contributed by local-only extensions (none in the public build). */
+function extensionSettingsHtml() {
+  return Object.values(S.extensions).map((m) => m.settingsHtml?.(IMMEDIATE) || '').join('');
+}
+
+function bindExtensionSettings() {
+  Object.values(S.extensions).forEach((m) => m.bindSettings?.());
+}
+
+function phoneSteps(pr, tsUrl, lanUrl) {
+  const ts = pr.tailscale;
+  const code = `${pr.code.slice(0, 3)} ${pr.code.slice(3)}`;
+  const link = (url) => `<span class="copyable" data-copy="${esc(url)}">${esc(url)}</span>`;
+  const step = ([html, state]) => `<li class="${state || ''}">${state === 'ok' ? '<span class="step-state">已完成</span>' : state === 'todo' ? '<span class="step-state">要做</span>' : ''}<span>${html}</span></li>`;
+  const viaTs = [
+    ['手機安裝 <b>Tailscale</b> App（App Store／Google Play），登入和這台電腦<b>同一個帳號</b>，並打開 App 裡的連線開關。', ''],
+    [ts ? `這台電腦已登入 Tailscale（${esc(ts.dns || ts.ip)}）。` : '這台電腦還沒偵測到 Tailscale：先在電腦安裝並登入 Tailscale，再重新整理這一頁。', ts ? 'ok' : 'todo'],
+    [tsUrl ? `HTTPS 連線已啟用：${link(tsUrl)}` : '按下方的「啟用 Tailscale 連線」。只會新增一個連接埠，不會覆蓋你現有的設定。', tsUrl ? 'ok' : 'todo'],
+    [`用手機相機掃右邊的 QR code${tsUrl ? '' : '（啟用後才會出現 Tailscale 的 QR）'}；或在手機的 Safari／Chrome 打開上面的網址。`, ''],
+    [`在手機輸入配對碼 <b>${esc(code)}</b>（掃 QR 會自動帶入；10 分鐘內有效，過期會自動換新）。`, ''],
+    ['iPhone：Safari 的分享按鈕 →「加入主畫面」；Android：Chrome 選單 →「安裝應用程式」。之後就像 App 一樣打開。', ''],
+  ];
+  const viaLan = [
+    ['手機和這台電腦連上<b>同一個 Wi-Fi</b>。', ''],
+    [lanUrl ? `區網連線已開啟：${link(lanUrl)}` : '勾選下方的「允許同一個區網（Wi-Fi）的手機連線」；Windows 跳出防火牆詢問時，在「私人網路」按「允許」。', lanUrl ? 'ok' : 'todo'],
+    ['用手機相機掃 QR code，或打開上面的網址。', ''],
+    [`輸入配對碼 <b>${esc(code)}</b>。區網是 HTTP，不能安裝成 App、不能收通知；出門在外請用 Tailscale。`, ''],
+  ];
+  return `<div class="phone-guide">
+      <section><h3>出門也能用：Tailscale（建議）</h3><ol class="phone-steps">${viaTs.map(step).join('')}</ol></section>
+      <section><h3>在家：同一個 Wi-Fi</h3><ol class="phone-steps">${viaLan.map(step).join('')}</ol></section>
+    </div>`;
+}
+
 function phoneHtml(pr) {
   const ts = pr.tailscale;
   const candidates = pr.lan_candidates || [];
@@ -120,9 +158,13 @@ function phoneHtml(pr) {
   const remembered = candidates.find((c) => c.ip === S.pairIp)?.ip;
   const selectedIp = remembered || (pr.lan_url ? new URL(pr.lan_url).hostname : (candidates.find((c) => !c.virtual) || candidates[0])?.ip || '');
   const selectedLanUrl = selectedIp && pr.lan_running ? `http://${selectedIp}:${pr.lan_port}/` : '';
-  const currentUrl = selectedLanUrl || ts?.https_url || '';
-  const qrSrc = currentUrl ? `/api/pairing/qr.svg?${selectedLanUrl ? `ip=${encodeURIComponent(selectedIp)}&` : ''}t=${Date.now()}` : '';
+  const tsUrl = ts?.serve_ready ? ts.https_url : '';
+  // Tailscale (HTTPS: installable app, notifications, voice) is preferred when it is ready.
+  const target = S.pairTarget === 'lan' && selectedLanUrl ? 'lan' : S.pairTarget === 'tailscale' && tsUrl ? 'tailscale' : tsUrl ? 'tailscale' : 'lan';
+  const currentUrl = target === 'tailscale' ? tsUrl : selectedLanUrl;
+  const qrSrc = currentUrl ? `/api/pairing/qr.svg?target=${target}${target === 'lan' ? `&ip=${encodeURIComponent(selectedIp)}` : ''}&t=${Date.now()}` : '';
   return `<div class="block-head"><span class="index">01 / Phone</span><h2>手機連線</h2><span class="aside">${IMMEDIATE} ${pr.devices.length} 台已配對</span></div>
+    ${phoneSteps(pr, tsUrl, selectedLanUrl)}
     <div class="settings-grid">
       <div class="stack">
         <span class="eyebrow">配對碼（<span id="pairCountdown">${esc(pairingRemaining(pr.expires_at))}</span> 後失效）</span>
@@ -133,7 +175,8 @@ function phoneHtml(pr) {
       <div class="stack phone-connect">
         ${qrSrc ? `<img class="qr" id="pairQr" src="${esc(qrSrc)}" alt="配對用 QR code" width="200" height="200">` : `<button class="btn primary" type="button" id="enableLanBtn">開啟區網連線並顯示 QR code</button>
           <p class="muted" style="margin:0">Windows 會顯示防火牆詢問，請在「私人網路」按「允許」。手機需連上同一個 Wi-Fi。</p>`}
-        ${candidates.length > 1 && pr.lan_running ? `<label class="field"><span>QR code 使用的網卡</span><select id="lanCandidate">${candidates.map((c) => `<option value="${esc(c.ip)}"${c.ip === selectedIp ? ' selected' : ''}>${esc(c.name)} · ${esc(c.ip)}${c.virtual ? '（虛擬網卡）' : ''}</option>`).join('')}</select></label>` : ''}
+        ${tsUrl && selectedLanUrl ? `<div class="seg" role="group" aria-label="QR code 的連線方式"><button type="button" data-pair-target="tailscale" class="${target === 'tailscale' ? 'on' : ''}" aria-pressed="${target === 'tailscale'}">Tailscale（HTTPS）</button><button type="button" data-pair-target="lan" class="${target === 'lan' ? 'on' : ''}" aria-pressed="${target === 'lan'}">區網</button></div>` : ''}
+        ${candidates.length > 1 && pr.lan_running && target === 'lan' ?`<label class="field"><span>QR code 使用的網卡</span><select id="lanCandidate">${candidates.map((c) => `<option value="${esc(c.ip)}"${c.ip === selectedIp ? ' selected' : ''}>${esc(c.name)} · ${esc(c.ip)}${c.virtual ? '（虛擬網卡）' : ''}</option>`).join('')}</select></label>` : ''}
         ${currentUrl ? `<p class="muted" style="margin:0">目前 QR 指向：<span id="pairUrl" class="copyable" data-copy="${esc(currentUrl)}">${esc(currentUrl)}</span></p>` : ''}
       </div>
       <div class="stack phone-connect">
@@ -142,12 +185,14 @@ function phoneHtml(pr) {
           <dt>區網監聽</dt><dd><span class="status-pill"><span class="dot ${pr.lan_running ? 'ok' : 'bad'}"></span>${pr.lan_running ? '正在監聽' : '未監聽'}</span></dd>
           <dt>區網網址</dt><dd>${selectedLanUrl ? `<span class="copyable" data-copy="${esc(selectedLanUrl)}">${esc(selectedLanUrl)}</span>` : '未開啟'}</dd>
           <dt>Tailscale</dt><dd>${ts ? `${esc(ts.ip)}${ts.dns ? ' · ' + esc(ts.dns) : ''}` : '沒有偵測到 Tailscale'}</dd>
-          ${ts && ts.https_url ? `<dt>外出時</dt><dd>先在電腦執行 <span class="copyable" data-copy="${esc(ts.serve_command)}">${esc(ts.serve_command)}</span>，手機開 <span class="copyable" data-copy="${esc(ts.https_url)}">${esc(ts.https_url)}</span>（HTTPS：可安裝成 App、可收通知、可用語音輸入）</dd>` : ''}
+          ${ts ? `<dt>外出時</dt><dd>${tsUrl
+            ? `手機（已登入同一個 Tailscale）打開 <span class="copyable" data-copy="${esc(tsUrl)}">${esc(tsUrl)}</span>：HTTPS，可安裝成 App、收通知、用語音輸入`
+            : `<button class="btn small" type="button" id="enableTsBtn">啟用 Tailscale 連線（HTTPS）</button><br><small class="muted">只會新增一個 HTTPS 連接埠，不會覆蓋你現有的 Tailscale serve 設定</small>`}</dd>` : ''}
         </dl>
         <details class="brief"><summary>掃了打不開？</summary><ul class="troubleshoot">
           <li>確認手機與電腦連上同一個 Wi-Fi。</li><li>在 Windows 防火牆的「私人網路」允許 Agora。</li>
           <li>不要選擇 vEthernet、WSL、VMware、「區域連線* 數字」、藍牙等虛擬網卡。</li><li>公司或公共 Wi-Fi 可能封鎖裝置互連。</li>
-          <li>可改用 Tailscale：<span class="copyable" data-copy="tailscale serve --bg 4717">tailscale serve --bg 4717</span></li>
+          <li>可改用 Tailscale：手機與電腦登入同一個 Tailscale 帳號，再按上面的「啟用 Tailscale 連線」。</li>
         </ul></details>
         <span class="eyebrow">已配對的裝置</span>
         ${pr.devices.length ? pr.devices.map((x) => `<div class="device"><span>${esc(x.name)}<br><small class="muted">配對於 ${esc(stamp(x.created_at))} · 最近 ${esc(rel(x.last_seen))}</small></span><button class="btn small danger" type="button" data-revoke="${esc(x.id)}">撤銷</button></div>`).join('') : '<p class="muted" style="margin:0">還沒有</p>'}
@@ -188,6 +233,13 @@ function bindPhone() {
     enableLan.disabled = true;
     try { await api('/api/network', { method: 'POST', body: { lan_enabled: true } }); await refreshPhone(); toast('已開啟區網連線'); $('#pairQr')?.focus?.(); }
     catch (e) { enableLan.disabled = false; toast(e.message, true); }
+  };
+  $$('[data-pair-target]').forEach((b) => { b.onclick = () => { S.pairTarget = b.dataset.pairTarget; refreshPhone(); }; });
+  const enableTs = $('#enableTsBtn');
+  if (enableTs) enableTs.onclick = async () => {
+    enableTs.disabled = true;
+    try { await api('/api/network/tailscale', { method: 'POST', body: {} }); S.pairTarget = 'tailscale'; await refreshPhone(); toast('已啟用 Tailscale 連線'); }
+    catch (e) { enableTs.disabled = false; toast(e.message, true); }
   };
   const lanCandidate = $('#lanCandidate');
   if (lanCandidate) lanCandidate.onchange = () => {
@@ -315,11 +367,16 @@ function paint(s, pr, schedules, health) {
   <section class="block" id="sec-misc">
     <div class="block-head"><span class="index">09 / Misc</span><h2>其他</h2></div>
     <div class="settings-grid">
+      ${extensionSettingsHtml()}
       <label class="check"><input type="checkbox" id="setDemo" data-k="demo"${s.demo_mode ? ' checked' : ''}> 示範模式：加入兩個離線模擬模型，預設只用它們，不呼叫 CLI、不使用額度</label>
       <div class="stack">
         <label class="check"><input type="checkbox" id="setShortcuts"${shortcutsEnabled() ? ' checked' : ''}> 啟用單鍵快捷鍵（? 與 g 系列） ${IMMEDIATE}</label>
         <small class="muted">只存在這台裝置；按 <kbd>?</kbd> 看全部快捷鍵</small>
       </div>
+      <fieldset class="motion-setting"><legend>動態效果</legend>
+        ${[['auto', '自動（跟隨系統）'], ['on', '開'], ['off', '關']].map(([value, label]) => `<label class="check"><input type="radio" name="motion" value="${value}"${motionSetting() === value ? ' checked' : ''}> ${label}</label>`).join('')}
+        <small class="muted">立即生效，設定只存在這台裝置。</small>
+      </fieldset>
       <div class="field">${notifyButton()}</div>
       <dl class="kv"><dt>資料夾</dt><dd>${esc(s.data_dir)}</dd><dt>版本</dt><dd>${esc(S.whoami.version)}</dd></dl>
     </div>
@@ -417,6 +474,8 @@ function bind(s) {
     }
   });
   $('#setShortcuts').onchange = (e) => setShortcutsEnabled(e.target.checked);
+  $$('input[name="motion"]', body).forEach((radio) => { radio.onchange = (e) => setMotionSetting(e.target.value); });
+  bindExtensionSettings();
   $('#clearBad').onclick = async () => { try { await api('/api/settings', { method: 'PATCH', body: { clear_unsupported: true } }); await loadProviders(); renderSettings(); toast('已清除'); } catch (e) { toast(e.message, true); } };
   $('#scheduleForm').onsubmit = async (e) => {
     e.preventDefault();

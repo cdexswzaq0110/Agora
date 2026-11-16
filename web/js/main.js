@@ -8,8 +8,11 @@ import { renderUsage, setQuotaInUsage } from './usage.js';
 import { renderSettings, clearSettingsTimer, confirmLeaveSettings } from './settings.js';
 import { renderExperiment } from './experiment.js';
 import { renderPair, pairCodeFromHash } from './pair.js';
+import { renderTeam, renderWorkflow, onWorkflowEvent } from './team.js';
 import { refreshAttention, scheduleAttention, announce, refreshDigestState } from './attention.js';
 import { initShortcuts } from './shortcuts.js';
+import { initMotion, pageEnter } from './motion.js';
+import { initCommandPalette } from './cmdk.js';
 
 const view = () => $('#view');
 window.__agora = S; // debugging aid (state of this page only)
@@ -36,10 +39,14 @@ async function route() {
   let m;
   if ((m = hash.match(/^#\/s\/([\w-]+)/))) { setNav('home'); await renderSession(m[1]); }
   else if ((m = hash.match(/^#\/x\/([\w-]+)/))) { setNav('home'); await renderExperiment(m[1]); }
+  else if ((m = hash.match(/^#\/w\/([\w-]+)/))) { setNav('team'); await renderWorkflow(m[1]); }
+  else if (hash.startsWith('#/sessions')) { setNav('home'); await renderHome(); }
   else if (hash.startsWith('#/digest')) { setNav('digest'); await renderDigest(); }
   else if (hash.startsWith('#/usage')) { setNav('usage'); await renderUsage(); }
   else if (hash.startsWith('#/settings')) { setNav('settings'); await renderSettings(); }
-  else { setNav('home'); await renderHome(); }
+  // v0.5: the project team is the home page (`#/`, and the older `#/team`).
+  else { setNav('team'); await renderTeam(); }
+  pageEnter();
   focusHeading();
 }
 
@@ -58,16 +65,18 @@ function openGlobal() {
     try { ev = JSON.parse(m.data); } catch { return; }
     // hello arrives on every (re)connect; lagged means events were dropped — resync either way.
     if (ev.type === 'hello') { (ev.quotas || []).forEach((q) => { S.quotas[q.provider] = q; }); renderMeters(); scheduleAttention(); refreshDigestState(); }
-    if (ev.type === 'lagged') { scheduleAttention(); refreshDigestState(); if ((location.hash || '#/') === '#/' && $('#sessions')) loadSessions(); }
+    if (ev.type === 'lagged') { scheduleAttention(); refreshDigestState(); if ($('#sessions')) loadSessions(); }
     if (ev.type === 'quota') setQuotaInUsage(ev.snapshot);
+    if (ev.type === 'workflow') onWorkflowEvent(ev);
     if (ev.type === 'digest') {
       onDigestEvent(ev);
       if (ev.status === 'done') notify('Agora · 每日技術情報', `${ev.date} 的技術情報已整理好`, '#/digest', `digest-${ev.date}`);
     }
     if (ev.type === 'status') {
+      document.dispatchEvent(new CustomEvent('agora:status', { detail: ev }));
       scheduleAttention();
       if (ev.status === 'awaiting_approval') announce(`方案已整理好，等你核准：${ev.title}`, `${ev.session_id}:${ev.status}`);
-      if ((location.hash || '#/') === '#/' && $('#sessions')) loadSessions();
+      if ($('#sessions')) loadSessions();
       if (ev.status === 'awaiting_approval') notify('Agora · 等你核准', `方案已整理好：${ev.title}`, `#/s/${ev.session_id}`, ev.session_id);
       else if (ev.status !== 'running') notify(`Agora · ${STATUS_ZH[ev.status] || ev.status}`, ev.title, `#/s/${ev.session_id}`, ev.session_id);
     }
@@ -93,6 +102,26 @@ function applyTheme(t) {
 }
 
 let globalOpen = false;
+// Local-only extensions (web/local/, git-ignored): the server lists the ones present in this
+// build. The public build has none, so nothing here references their names or files.
+let extensionsLoaded = false;
+async function loadExtensions() {
+  if (extensionsLoaded) return;
+  extensionsLoaded = true;
+  for (const name of S.whoami.extensions || []) {
+    try {
+      const css = document.createElement('link');
+      css.rel = 'stylesheet';
+      css.href = `/local/${name}.css`;
+      document.head.append(css);
+      const module = await import(`/local/${name}.js`);
+      S.extensions[name] = module;
+      module.init?.();
+    } catch (e) { console.warn(`extension ${name} failed to load`, e); }
+  }
+  document.dispatchEvent(new CustomEvent('agora:extensions'));
+}
+
 async function boot() {
   try {
     S.whoami = await api('/api/whoami');
@@ -102,6 +131,7 @@ async function boot() {
   }
   $('#footVersion').textContent = `Agora v${S.whoami.version}${S.whoami.local ? '' : ' · ' + (S.whoami.device || '已配對裝置')}`;
   if (!S.whoami.paired) { setNav(''); renderPair(boot); return; }
+  loadExtensions();
   await Promise.all([
     loadProviders(),
     api('/api/projects').then((p) => { S.projects = p; }),
@@ -152,9 +182,12 @@ document.addEventListener('DOMContentLoaded', () => {
   measureTopbar();
   watchKeyboard();
   initShortcuts();
+  initMotion();
+  initCommandPalette();
   let theme = store.get('theme', 'auto');
   applyTheme(theme);
   $('#themeBtn').addEventListener('click', () => { theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length]; store.set('theme', theme); applyTheme(theme); });
+  document.addEventListener('agora:cycletheme', () => { theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length]; store.set('theme', theme); applyTheme(theme); });
   if ('serviceWorker' in navigator && window.isSecureContext && !S.desktop) navigator.serviceWorker.register('/sw.js').catch(() => {});
   boot();
 });

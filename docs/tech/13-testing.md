@@ -4,7 +4,7 @@
 cargo test --workspace
 ```
 
-離線執行，不呼叫任何 CLI，不花額度。目前 112 個測試通過（v0.4），另有 1 個需要網路的探測測試預設略過。前端另用 `node scripts/check-web.mjs` 檢查 module 語法、具名 import 與離線快取清單。
+離線執行，不呼叫任何 CLI，不花額度。目前 137 個測試通過（v0.5），另有 1 個需要網路的探測測試預設略過。前端另用 `node scripts/check-web.mjs` 檢查 module 語法、具名 import 與離線快取清單。
 
 ## 原則（來自 Agent Kernel 的 core rules）
 
@@ -16,9 +16,10 @@ cargo test --workspace
 
 | 層 | 位置 | 數量 | 重點 |
 |---|---|---|---|
-| 單元 | `agora-core/src/**`（`#[cfg(test)]`） | 56（另 1 個略過） | 解析器（Claude、Codex、6 個情報來源）、額度對應與合併、記憶壓縮、檢索記憶、提示詞解析、git worktree 完整流程、匯出、排程判斷、歷史取樣、證據等級 |
-| 引擎端到端 | `agora-core/tests/engine_modes.rs` | 22 | 五種模式、核准（編輯、修訂、退回）、worktree 實作後套用、紅隊、只產出方案、直接寫入、分岔、盲審、額度保護與改派、插話、搜尋、比較實驗、情報整理與備援、排程 |
-| 伺服器 | `agora-server/src/auth.rs`、`tests/api.rs` | 4 + 6 | 本機判定、同源檢查、配對（一次性、鎖定）、cookie；API 生命週期、DNS rebinding、CSRF、只限本機的匯出、QR 權限；MCP 交握與工具列表 |
+| 單元 | `agora-core/src/**`（`#[cfg(test)]`） | 79（另 1 個略過） | 解析器（Claude、Codex、6 個情報來源）、額度對應與合併、記憶壓縮、檢索記憶、提示詞解析、git worktree 完整流程、匯出、排程判斷、歷史取樣、證據等級 |
+| 引擎端到端 | `agora-core/tests/engine_modes.rs` | 26 | 五種模式、核准（編輯、修訂、退回）、worktree 實作後套用、紅隊、只產出方案、直接寫入、分岔、盲審、額度保護與改派、插話、搜尋、比較實驗、情報整理與備援、排程 |
+| 專案團隊端到端 | `agora-core/tests/team_workflow.rs` | 9 | 階段跑到核准關卡、核准帶動下一階段、角色紀錄、並行開始只建一個議題、可行性「不做」讓工作流停止、上游重核准讓下游過期且舊議題不能落地、重啟後對帳、惡意構想與長度上限、空的角色小節記為缺漏、工作流呼叫上限與確認提高、任務交付冪等、匯出路徑（[14](14-team-workflow.md)） |
+| 伺服器 | `agora-server/src/auth.rs`、`tests/api.rs` | 13 + 10 | 本機判定、同源檢查、配對（一次性、鎖定）、cookie；API 生命週期、DNS rebinding、CSRF、只限本機的匯出、QR 權限；MCP 交握與工具列表 |
 
 模擬提供者（`provider/mock.rs`）是確定性的，並支援幾個測試用標記：
 
@@ -29,6 +30,8 @@ cargo test --workspace
 | `[mock:split]` | GPT 裁判判另一方勝，用來測試裁判意見分歧 |
 | `[mock:write]` | 執行者真的寫一個檔案，用來測試 worktree |
 | `[mock:echo-headers]` | 把看到的逐字稿標題回傳出來，用來測試盲審 |
+| `[mock:thin]` | 團隊階段的角色小節只有標題沒有內容，用來測試「缺漏」 |
+| `【團隊階段】`（提示詞裡） | 依這次被指派的角色逐一寫小節，並依階段補上待你回答的問題、建議、任務、保留的異議（不是測試標記，是團隊提示詞本身的標記） |
 
 ## 只做過實機驗證的項目（2026-11-16）
 

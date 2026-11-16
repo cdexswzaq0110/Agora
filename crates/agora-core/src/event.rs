@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use crate::model::*;
 use crate::quota::QuotaSnapshot;
+use crate::team::{StageKind, WorkflowStatus};
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -73,6 +74,15 @@ pub enum Event {
         date: String,
         error: Option<String>,
     },
+    /// 專案團隊: a workflow changed (a stage moved, the next step changed).
+    Workflow {
+        workflow_id: String,
+        title: String,
+        status: WorkflowStatus,
+        next: Option<StageKind>,
+        /// The stage session waiting for your approval, if any.
+        awaiting: Option<String>,
+    },
 }
 
 impl Event {
@@ -90,12 +100,12 @@ impl Event {
             | Event::Phase { session_id, .. }
             | Event::Plan { session_id, .. }
             | Event::Workspace { session_id, .. } => Some(session_id),
-            Event::Quota { .. } | Event::Digest { .. } => None,
+            Event::Quota { .. } | Event::Digest { .. } | Event::Workflow { .. } => None,
         }
     }
 
     /// Events worth sending on the global (non-session) stream: low volume only.
     pub fn is_global(&self) -> bool {
-        matches!(self, Event::Status { .. } | Event::Quota { .. } | Event::Digest { .. })
+        matches!(self, Event::Status { .. } | Event::Quota { .. } | Event::Digest { .. } | Event::Workflow { .. })
     }
 }

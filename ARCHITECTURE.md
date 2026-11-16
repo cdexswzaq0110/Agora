@@ -54,7 +54,8 @@ flowchart TB
 6. **證據等級由程式決定上限**：沒有驗證指令通過就不會是「已確認」；只靠模型判斷的結論，最高「推論」。
 7. **一個伺服器、所有介面**（[ADR 0002](docs/adr/0002-rust-core-embedded-http-tauri-shell.md)）。手機一定要走 HTTP，所以桌面也走 HTTP，只維護一套前端；頁面沒有 Tauri IPC。
 8. **agent 拿不到你的個人工具**：預設隔離 CLI 的個人 MCP、外掛和 hooks（[lessons/0007](docs/lessons/0007-cli-personal-config-leaks-into-agent-runs.md)）。
-9. **離線可測**：`MockProvider` 是確定性的。五種模式、核准關卡、worktree、情報整理、信任模型、MCP，都能在不呼叫 CLI、不花額度的情況下測試。
+9. **衍生狀態從來源對帳，不靠事件**（v0.5）：專案團隊的每個階段就是一個 plan-only 工作坊議題；工作流的階段狀態每次讀取、開始、啟動、議題變化時都從議題紀錄重新推導（冪等），所以漏掉一個事件或中途重啟都不會讓兩者不一致（[14](docs/tech/14-team-workflow.md)）。
+10. **離線可測**：`MockProvider` 是確定性的。五種模式、核准關卡、worktree、情報整理、信任模型、MCP，都能在不呼叫 CLI、不花額度的情況下測試。
 
 ## 模組對照
 
@@ -69,6 +70,8 @@ flowchart TB
 | 記憶壓縮、檢索記憶、專案快照 | `compact.rs`、`memory.rs`、`repo.rs`、`prompts.rs` | [07](docs/tech/07-memory-and-context.md) |
 | 信任模型 | `agora-server/src/{auth,lib,v2}.rs` | [08](docs/tech/08-security-model.md) |
 | 範本、匯出（ADR、lesson、Markdown） | `templates.rs`、`export.rs` | [10](docs/tech/10-data-model.md) |
+| 專案團隊（名冊、階段計畫、對帳、任務交付、匯出） | `team.rs`、`engine/team_ops.rs`、`engine/modes.rs::team_stage`、`agora-server/src/team_api.rs` | [14](docs/tech/14-team-workflow.md) |
+| 助理聊天（角色人設可由本機擴充替換） | `engine/assistant.rs`；本機擴充的載入見 `agora-server/src/lib.rs::local_extensions`、`web/js/main.js::loadExtensions` | [09](docs/tech/09-api-reference.md) |
 | 介面 | `web/js/*.js`、`web/app.css` | [11](docs/tech/11-frontend.md) |
 | 桌面外殼、MCP server | `src-tauri/src/main.rs`、`agora-server/src/bin/agora-mcp.rs` | [12](docs/tech/12-desktop-mobile-mcp.md) |
 

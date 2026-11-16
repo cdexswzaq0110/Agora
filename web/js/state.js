@@ -30,6 +30,9 @@ export const S = {
   es: null,
   expanded: new Set(),
   route: '',
+  teamInfo: null,
+  /** Local-only extensions loaded at boot (see main.js loadExtensions). */
+  extensions: {},
 };
 if (new URLSearchParams(location.search).get('shell') === 'desktop') store.set('desktop', true);
 

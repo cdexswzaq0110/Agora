@@ -47,12 +47,15 @@ pub fn build(ctx: &PromptContext) -> String {
         Access::ReadOnly => "本輪為**唯讀**：可以閱讀專案檔案，但不要修改任何檔案、不要執行會改變狀態的指令。",
         Access::Write => "本輪**可以修改**專案檔案來完成任務；完成後列出改了哪些檔案。不要執行破壞性的 git 操作（reset --hard、push --force 等）。",
     };
+    let setting = match &ctx.spec.stage {
+        Some(st) => format!("專案團隊・{}", st.kind.label()),
+        None => format!("{} 模式", ctx.spec.mode.label()),
+    };
     let mut p = String::new();
     p.push_str(&format!(
-        "你是 Agora 多模型協作平台中的一位成員（{}），本輪身分：**{}**（{} 模式，第 {} 輪）。\n",
+        "你是 Agora 多模型協作平台中的一位成員（{}），本輪身分：**{}**（{setting}，第 {} 輪）。\n",
         ctx.family.label(),
         ctx.role.label(),
-        ctx.spec.mode.label(),
         ctx.round
     ));
     p.push_str(&format!("專案：{}（工作目錄：{}）\n", ctx.project.name, ctx.project.path));

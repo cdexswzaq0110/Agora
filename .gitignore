@@ -5,3 +5,5 @@
 src-tauri/gen/
 .DS_Store
 Thumbs.db
+# Local-only UI extensions (personal characters, personas): never published
+/web/local/

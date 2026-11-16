@@ -18,10 +18,11 @@
   <header class="topbar">
     <a class="brand" href="#/"><b>AGORA</b><span>多模型協作平台</span></a>
     <nav class="nav" aria-label="主選單">
-      <a href="#/" data-nav="home">議題</a>
-      <a href="#/digest" data-nav="digest">情報</a>
-      <a href="#/usage" data-nav="usage">用量</a>
-      <a href="#/settings" data-nav="settings">設定</a>
+      <a href="#/" data-nav="team" data-scramble>團隊</a>
+      <a href="#/sessions" data-nav="home" data-scramble>議題</a>
+      <a href="#/digest" data-nav="digest" data-scramble>情報</a>
+      <a href="#/usage" data-nav="usage" data-scramble>用量</a>
+      <a href="#/settings" data-nav="settings" data-scramble>設定</a>
     </nav>
     <div class="meters" id="meters" aria-label="剩餘用量"></div>
   </header>
@@ -32,7 +33,7 @@
   <footer class="foot">
     <span id="footVersion">Agora</span>
     <span>只使用 CLI 訂閱額度 · 絕不使用付費 API key</span>
-    <span><button type="button" id="shortcutsBtn" aria-haspopup="dialog">快捷鍵 ?</button> · <button type="button" id="themeBtn">主題：自動</button></span>
+    <span><a href="#/settings/phone">手機連線</a> · <button type="button" id="shortcutsBtn" aria-haspopup="dialog">快捷鍵 ?</button> · <button type="button" id="cmdkBtn" aria-haspopup="dialog">命令 Ctrl K</button> · <button type="button" id="themeBtn">主題：自動</button></span>
   </footer>
   <noscript><p style="padding:2rem">Agora 需要啟用 JavaScript。</p></noscript>
 </body>

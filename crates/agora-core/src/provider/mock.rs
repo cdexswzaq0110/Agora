@@ -49,7 +49,48 @@ impl MockProvider {
         "單人"
     }
 
+    /// 專案團隊 stage turns: one section per assigned role (from the `【指派角色】` list of
+    /// this turn's ask), plus what the stage requires. `[mock:thin]` writes empty sections.
+    fn team_answer(&self, prompt: &str) -> String {
+        let ask = prompt.rsplit("## 你這一輪的任務").next().unwrap_or("");
+        let thin = prompt.contains("[mock:thin]");
+        let names: Vec<&str> = ask
+            .split("【指派角色】")
+            .nth(1)
+            .map(|list| list.lines().skip_while(|l| l.trim().is_empty()).take_while(|l| l.starts_with("- ")).filter_map(|l| l[2..].split('（').next()).collect())
+            .unwrap_or_default();
+        let mut s = format!("（模擬 {}）\n\n", self.family.label());
+        if ask.contains("修訂本階段文件") {
+            s.push_str("## 修訂說明\n- 依你的意見補充並修正。\n\n");
+        }
+        s.push_str("## 階段文件\n");
+        for n in &names {
+            if thin {
+                s.push_str(&format!("### {n}（完整）\n略\n"));
+            } else {
+                s.push_str(&format!("### {n}（完整）\n- {n} 的模擬分析：已整理這個構想在本階段的重點、風險與建議做法。\n"));
+            }
+        }
+        if ask.contains("審查與整合者") || ask.contains("保留的異議") {
+            s.push_str("### 整合結論\n- 綜合各角色的產出，修正了互相矛盾之處。\n## 保留的異議\n無\n## 需要你決定的事\n無\n");
+        }
+        if ask.contains("待你回答的問題") {
+            s.push_str("## 待你回答的問題\n1. 主要使用者是誰？（預設：你自己）\n2. 第一版要在多久內完成？（預設：兩週）\n");
+        }
+        if ask.contains("## 建議`") {
+            s.push_str("## 建議\n做\n理由：模擬評估顯示風險可控。\n");
+        }
+        if ask.contains("### 任務 N") {
+            s.push_str("### 任務 1：建立資料模型\n- 驗收：遷移可以重複執行\n- 驗證：`cargo test`\n### 任務 2：實作 API\n- 驗收：GET /items 回傳清單\n- 驗證：`cargo test`\n");
+        }
+        s.push_str("整體證據等級：推論");
+        s
+    }
+
     fn answer(&self, prompt: &str) -> String {
+        if prompt.contains(crate::team::TEAM_MARKER) && prompt.rsplit("## 你這一輪的任務").next().is_some_and(|a| a.contains(crate::team::TEAM_MARKER)) {
+            return self.team_answer(prompt);
+        }
         let who = format!("模擬 {}", self.family.label());
         let topic: String = prompt
             .split("## 議題\n")

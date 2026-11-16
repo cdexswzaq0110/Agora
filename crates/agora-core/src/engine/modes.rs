@@ -5,6 +5,8 @@
 //!   human approval gate → build in an isolated worktree → verify → review against the plan's
 //!   acceptance criteria. The relay mode and the workshop's build phase share one bounded
 //!   build/verify/review loop.
+//! - 專案團隊 (v0.5): a plan-only workshop with `spec.stage` runs `team_stage()` instead —
+//!   role producers → integrator → the same approval gate (see team.rs).
 
 use anyhow::{bail, Result};
 use std::sync::Arc;
@@ -15,6 +17,7 @@ use crate::compact;
 use crate::grade::EvidenceGrade;
 use crate::model::*;
 use crate::prompts::{self, ReviewDecision, Winner};
+use crate::team;
 
 pub(crate) fn rounds_for(spec: &SessionSpec) -> u32 {
     match spec.mode {
@@ -312,6 +315,9 @@ impl Runner {
     }
 
     pub(super) async fn workshop(self: &Arc<Self>) -> Result<()> {
+        if let Some(st) = self.spec.stage.clone() {
+            return self.team_stage(&st).await;
+        }
         let synth = self.synthesizer();
         let resumed = self.resume.lock().unwrap().take();
         if resumed.is_none() {
@@ -378,6 +384,46 @@ impl Runner {
         self.build_loop(BuildKind::Plan, &builder, &reviewer, verify_cmd, Access::Write).await
     }
 
+    // ------------------------------------------------------------------ 專案團隊
+
+    /// One team stage (v0.5, red-team #6): producers in parallel → integrator (review and
+    /// write the document) → the workshop's approval gate. With a single producer and no
+    /// integrator, the producer's output is the document. Revisions go to the stage owner.
+    async fn team_stage(self: &Arc<Self>, st: &team::StageSpec) -> Result<()> {
+        let owner = st.owner().participant.clone();
+        let resumed = self.resume.lock().unwrap().take();
+        if resumed.is_none() {
+            self.set_phase("團隊產出").await;
+            let r1 = self.next_round().await;
+            let has_integrator = st.integrator.is_some();
+            let plans = st
+                .producers
+                .iter()
+                .map(|c| self.team_plan(&c.participant, Role::Planner, r1, team::ask_producer(st.kind, c, has_integrator), &c.roles))
+                .collect();
+            let outputs = self.parallel(plans).await?;
+            if outputs.iter().all(|t| !t.ok) {
+                bail!("這個階段的團隊成員全部失敗");
+            }
+            let doc_turn = match &st.integrator {
+                Some(int) => {
+                    self.set_phase("審查與整合").await;
+                    let r2 = self.next_round().await;
+                    let ask = team::ask_integrator(st.kind, int, &st.producers);
+                    let t = self.turn(self.team_plan(&int.participant, Role::Synthesizer, r2, ask, &int.roles), self.visible_now().await).await?;
+                    if !t.ok {
+                        bail!("審查與整合失敗：{}", t.error.unwrap_or_default());
+                    }
+                    t
+                }
+                None => outputs.into_iter().next().filter(|t| t.ok).ok_or_else(|| anyhow::anyhow!("團隊成員發言失敗"))?,
+            };
+            self.set_plan(Plan { text: team::extract_stage_doc(&doc_turn.text), ..Default::default() }).await;
+        }
+        self.approval_loop(&owner, resumed).await?;
+        Ok(())
+    }
+
     /// Returns `true` to proceed to the build, `false` when the session ends with the plan.
     async fn approval_loop(self: &Arc<Self>, synth: &Participant, mut pending: Option<GateDecision>) -> Result<bool> {
         loop {
@@ -440,14 +486,16 @@ impl Runner {
                     self.set_plan(plan.clone()).await;
                     self.set_phase("修訂方案").await;
                     let r = self.next_round().await;
-                    let s = self
-                        .turn(
-                            self.plan(synth, Role::Synthesizer, r, prompts::ask_plan_revise(&request), Access::ReadOnly),
-                            self.visible_now().await,
-                        )
-                        .await?;
+                    let turn_plan = match &self.spec.stage {
+                        Some(st) => self.team_plan(synth, Role::Synthesizer, r, team::ask_revise(st, &request), &st.owner().roles),
+                        None => self.plan(synth, Role::Synthesizer, r, prompts::ask_plan_revise(&request), Access::ReadOnly),
+                    };
+                    let s = self.turn(turn_plan, self.visible_now().await).await?;
                     if s.ok {
-                        plan.text = prompts::extract_plan(&s.text);
+                        plan.text = match &self.spec.stage {
+                            Some(_) => team::extract_stage_doc(&s.text),
+                            None => prompts::extract_plan(&s.text),
+                        };
                         plan.revision += 1;
                         self.set_plan(plan).await;
                     } else {

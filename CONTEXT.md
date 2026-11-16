@@ -28,6 +28,14 @@
 | 額度保護／改派 | `QuotaSnapshot::blocks` / `reroute_candidate` | 快用完時改派給另一個就緒的模型，或直接拒絕 |
 | 發言上限 | `Engine::turn_budget` | 每個議題最多幾次 CLI 呼叫（硬上限 24） |
 | 計費保護 | `PAID_API_ENV`、`apiKeySource`、`account.type` | 確保永遠不會用到 API key 計費 |
+| 專案團隊／工作流 | `team::Workflow` | 從一個構想到任務清單的五個階段（構想收斂、可行性分析、需求與體驗、技術設計、任務拆分），存在 `workflows/<id>.json` |
+| 團隊角色 | `team::ROLES` / `TeamRole` | 使用者列的 18 個職能角色（PM…DL 工程師）；和流程角色 `Role` 不同，是資料不是 enum |
+| 階段 | `StageKind` / `StageSpec` | 一個階段＝一個 plan-only 工作坊議題（`SessionSpec.stage`），沿用核准關卡 |
+| 呼叫計畫 | `stage_plan` / `StagePlan` / `Panel` | 每個階段由哪家模型、一次扮演哪些角色；深度：快速、標準、完整 |
+| 角色紀錄 | `RoleCheck` | 每個角色在階段裡的「完整／簡查／不適用／缺漏」，由程式依指派產生 |
+| 已過期 | `StageStatus::Stale` | 上游文件改版後，依據舊版的下游文件；要重跑才算數 |
+| 對帳 | `team::reconcile` | 從議題紀錄重新推導階段狀態，冪等 |
+| 本機擴充 | `web/local/`、`whoami.extensions` | 只放在自己電腦上的介面擴充（例如個人的桌寵角色與人設）；不進 git，公開版沒有，執行時才依伺服器回報載入 |
 | 個人設定隔離 | `isolate_cli_config` / `clean_config` | CLI 不載入你個人的 MCP 工具、外掛和 hooks |
 | 每日技術情報 | `Digest` / `DigestItem` | 每天整理一次國外社群的熱門項目，附引用編號 |
 | 範本 | `Template` | 一鍵套用的議題設定（取自 skill 庫） |

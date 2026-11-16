@@ -320,6 +320,92 @@ pub async fn tailscale_info() -> Option<(String, Option<String>)> {
     Some((ip, dns))
 }
 
+// ---------------------------------------------------------------- tailscale serve (v0.5)
+// v0.4 assumed `https://<host>.ts.net/` (port 443) and suggested `tailscale serve --bg 4717`.
+// On a machine that already serves something else on 443 that URL is another app, and the
+// suggested command would replace the user's mapping. Read the real serve config instead and
+// only ever *add* a mapping on a free HTTPS port.
+
+fn tailscale_exe() -> Option<std::path::PathBuf> {
+    agora_core::provider::resolve::find_in_path(&["tailscale.exe", "tailscale"]).or_else(|| {
+        let p = std::path::PathBuf::from(r"C:\Program Files\Tailscale\tailscale.exe");
+        p.is_file().then_some(p)
+    })
+}
+
+async fn tailscale_run(args: &[&str], secs: u64) -> Result<String, String> {
+    let exe = tailscale_exe().ok_or("找不到 Tailscale CLI")?;
+    let mut c = tokio::process::Command::new(exe);
+    c.args(args).stdin(std::process::Stdio::null()).kill_on_drop(true);
+    agora_core::provider::proc::no_window(&mut c);
+    let out = tokio::time::timeout(Duration::from_secs(secs), c.output()).await.map_err(|_| "Tailscale CLI 逾時".to_string())?.map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// `http://127.0.0.1:4717`, `localhost:4717/`, `4717` → does it point at this port on loopback?
+fn proxies_to(target: &str, port: u16) -> bool {
+    let t = target.trim().trim_start_matches("http://").trim_end_matches('/');
+    let (host, p) = t.rsplit_once(':').unwrap_or(("127.0.0.1", t));
+    matches!(host, "127.0.0.1" | "localhost") && p.parse::<u16>().ok() == Some(port)
+}
+
+/// From `tailscale serve status --json`: the HTTPS URL whose `/` handler proxies to Agora.
+pub fn parse_serve_url(json: &str, port: u16) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let web = v.get("Web")?.as_object()?;
+    let mut hits: Vec<(String, u16)> = web
+        .iter()
+        .filter(|(_, conf)| conf.pointer("/Handlers/~1/Proxy").and_then(|p| p.as_str()).is_some_and(|p| proxies_to(p, port)))
+        .filter_map(|(host_port, _)| {
+            let (host, p) = host_port.rsplit_once(':')?;
+            Some((host.trim_end_matches('.').to_string(), p.parse().ok()?))
+        })
+        .collect();
+    hits.sort_by_key(|(_, p)| *p);
+    hits.first().map(|(host, p)| if *p == 443 { format!("https://{host}/") } else { format!("https://{host}:{p}/") })
+}
+
+/// HTTPS ports the serve config already uses (any handler): never touched by Agora.
+pub fn used_serve_ports(json: &str) -> Vec<u16> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else { return vec![] };
+    let mut ports: Vec<u16> = v.get("TCP").and_then(|t| t.as_object()).map(|m| m.keys().filter_map(|k| k.parse().ok()).collect()).unwrap_or_default();
+    if let Some(web) = v.get("Web").and_then(|w| w.as_object()) {
+        ports.extend(web.keys().filter_map(|k| k.rsplit_once(':').and_then(|(_, p)| p.parse::<u16>().ok())));
+    }
+    ports.sort_unstable();
+    ports.dedup();
+    ports
+}
+
+/// The ports Tailscale serves HTTPS on without extra setup, first free one wins.
+pub fn pick_serve_port(used: &[u16]) -> Option<u16> {
+    [443u16, 8443, 10000].into_iter().find(|p| !used.contains(p))
+}
+
+/// `Some(url)` when Tailscale already serves Agora over HTTPS.
+pub async fn tailscale_serve_url(port: u16) -> Option<String> {
+    let json = tailscale_run(&["serve", "status", "--json"], 5).await.ok()?;
+    parse_serve_url(&json, port)
+}
+
+/// Add (never replace) an HTTPS mapping to Agora on a free port; returns the URL.
+pub async fn enable_tailscale_serve(port: u16) -> Result<String, String> {
+    let json = tailscale_run(&["serve", "status", "--json"], 5).await.unwrap_or_default();
+    if let Some(url) = parse_serve_url(&json, port) {
+        return Ok(url);
+    }
+    let https = pick_serve_port(&used_serve_ports(&json)).ok_or("Tailscale 的 HTTPS 連接埠（443、8443、10000）都已被其他服務使用")?;
+    let target = format!("http://127.0.0.1:{port}");
+    let flag = format!("--https={https}");
+    tailscale_run(&["serve", "--bg", &flag, &target], 30).await.map_err(|e| format!("tailscale serve 失敗：{e}"))?;
+    let after = tailscale_run(&["serve", "status", "--json"], 5).await.unwrap_or_default();
+    parse_serve_url(&after, port).ok_or_else(|| "已執行 tailscale serve，但讀不到對應的網址".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -426,6 +512,22 @@ mod tests {
     fn selection_keeps_only_virtual_candidate() {
         let candidates = vec![candidate("172.24.0.1", "vEthernet (WSL)")];
         assert_eq!(select_lan_candidate(&candidates, Some("172.24.0.1".parse().unwrap())), Some(candidates[0].clone()));
+    }
+
+    #[test]
+    fn serve_url_comes_from_the_real_mapping_and_never_assumes_443() {
+        // Measured on the user's machine: 443 serves another app, Agora was added on 8443.
+        let json = r#"{"TCP":{"443":{"HTTPS":true},"8443":{"HTTPS":true}},"Web":{"desktop-x.tailnet-example.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:18770"}}},"desktop-x.tailnet-example.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:4717"}}}}}"#;
+        assert_eq!(parse_serve_url(json, 4717).as_deref(), Some("https://desktop-x.tailnet-example.ts.net:8443/"));
+        assert_eq!(parse_serve_url(json, 4799), None, "no mapping → no URL (v0.4 guessed :443, which is another app here)");
+        assert_eq!(used_serve_ports(json), vec![443, 8443]);
+        assert_eq!(pick_serve_port(&[443]), Some(8443), "never replace the user's 443 mapping");
+        assert_eq!(pick_serve_port(&[]), Some(443));
+        assert_eq!(pick_serve_port(&[443, 8443, 10000]), None);
+        let only443 = r#"{"Web":{"pc.ts.net:443":{"Handlers":{"/":{"Proxy":"localhost:4717/"}}}}}"#;
+        assert_eq!(parse_serve_url(only443, 4717).as_deref(), Some("https://pc.ts.net/"));
+        assert!(proxies_to("4717", 4717) && proxies_to("http://localhost:4717", 4717) && !proxies_to("http://10.0.0.2:4717", 4717));
+        assert_eq!(parse_serve_url("not json", 4717), None);
     }
 
     #[test]

@@ -89,6 +89,111 @@ async fn local_is_trusted_and_phone_must_pair() {
 }
 
 #[tokio::test]
+async fn assistant_answers_rejects_parallel_and_requires_pairing() {
+    let st = state();
+    let body = json!({"message":"請簡短回答"});
+    let (status, _, answer) = call(app(&st, LOCAL), post("/api/assistant/ask", "127.0.0.1:4717", body)).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert!(answer["text"].as_str().is_some_and(|s| !s.is_empty()));
+    assert!(answer["provider"].as_str().unwrap().starts_with("mock-"));
+
+    let slow_app = app(&st, LOCAL);
+    let first = tokio::spawn(async move {
+        call(slow_app, post("/api/assistant/ask", "127.0.0.1:4717", json!({"message":"[mock:slow] 慢慢回答"}))).await
+    });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let (status, _, _) = call(app(&st, LOCAL), post("/api/assistant/ask", "127.0.0.1:4717", json!({"message":"第二題"}))).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, _, _) = first.await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _, _) = call(app(&st, PHONE), post("/api/assistant/ask", "192.168.1.5:4718", json!({"message":"未配對"}))).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn assistant_rejects_long_messages_and_invalid_roles() {
+    let st = state();
+    let (status, _, body) = call(app(&st, LOCAL), post("/api/assistant/ask", "127.0.0.1:4717", json!({"message":"字".repeat(2001)}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("2000"));
+
+    let body = json!({"message":"你好", "history":[{"role":"system", "text":"越權"}]});
+    let (status, _, _) = call(app(&st, LOCAL), post("/api/assistant/ask", "127.0.0.1:4717", body)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+async fn wait_status(st: &AppState, id: &str, want: &str) -> Value {
+    for _ in 0..400 {
+        let (_, _, v) = call(app(st, LOCAL), get(&format!("/api/sessions/{id}"), "127.0.0.1:4717")).await;
+        if v["status"] == want {
+            return v;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("session {id} never reached {want}");
+}
+
+#[tokio::test]
+async fn team_workflow_api_is_idempotent_and_export_is_local_only() {
+    let st = state();
+    let h = "127.0.0.1:4717";
+    let (s, _, info) = call(app(&st, LOCAL), get("/api/team", h)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(info["roles"].as_array().unwrap().len(), 18);
+    assert_eq!(info["depths"]["standard"]["general"]["calls"], 9);
+
+    let (_, _, projects) = call(app(&st, LOCAL), get("/api/projects", h)).await;
+    let project = projects[0]["id"].as_str().unwrap().to_string();
+    let body = json!({ "project_id": project, "idea": "幫團隊排值班的小工具", "depth": "quick", "claude": "mock-claude", "gpt": "mock-gpt" });
+    let (s, _, wf) = call(app(&st, LOCAL), post("/api/workflows", h, body)).await;
+    assert_eq!(s, StatusCode::OK, "{wf}");
+    let id = wf["id"].as_str().unwrap().to_string();
+    assert_eq!(wf["next"], "discovery");
+
+    // Two starts → one session; an unknown stage or workflow is a 404.
+    let start = format!("/api/workflows/{id}/stages/discovery/start");
+    let (s, _, a) = call(app(&st, LOCAL), post(&start, h, json!({}))).await;
+    assert_eq!(s, StatusCode::OK, "{a}");
+    let (_, _, b) = call(app(&st, LOCAL), post(&start, h, json!({}))).await;
+    assert_eq!(a["id"], b["id"]);
+    let (s, _, _) = call(app(&st, LOCAL), post(&format!("/api/workflows/{id}/stages/deploy/start"), h, json!({}))).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _, _) = call(app(&st, LOCAL), get("/api/workflows/w-ffff", h)).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    // The stage is approved through the session's own gate.
+    let sid = a["id"].as_str().unwrap().to_string();
+    wait_status(&st, &sid, "awaiting_approval").await;
+    let (s, _, _) = call(app(&st, LOCAL), post(&format!("/api/sessions/{sid}/decide"), h, json!({ "action": "approve" }))).await;
+    assert_eq!(s, StatusCode::OK);
+    wait_status(&st, &sid, "done").await;
+    let mut view = Value::Null;
+    for _ in 0..200 {
+        view = call(app(&st, LOCAL), get(&format!("/api/workflows/{id}"), h)).await.2;
+        if view["stages"][0]["status"] == "approved" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(view["stages"][0]["status"], "approved", "{view}");
+    assert_eq!(view["next"], "feasibility");
+
+    // A session cannot smuggle in a team stage through the public endpoint.
+    let stage = b["spec"]["stage"].clone();
+    let direct = json!({ "project_id": project, "mode": "workshop", "participants": [{ "provider": "mock-claude" }], "prompt": "x", "stage": stage });
+    let (s, _, e) = call(app(&st, LOCAL), post("/api/sessions", h, direct)).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{e}");
+
+    // Export writes into the project: this computer only.
+    let (s, _, _) = call(app(&st, PHONE), post(&format!("/api/workflows/{id}/export"), "192.168.1.5:4718", json!({}))).await;
+    assert!(s == StatusCode::UNAUTHORIZED || s == StatusCode::FORBIDDEN, "{s}");
+    let (s, _, out) = call(app(&st, LOCAL), post(&format!("/api/workflows/{id}/export"), h, json!({}))).await;
+    assert_eq!(s, StatusCode::OK, "{out}");
+    assert!(out["paths"][0].as_str().unwrap().ends_with("01-discovery-r1.md"));
+}
+
+#[tokio::test]
 async fn rebinding_and_csrf_are_refused() {
     let st = state();
     // DNS rebinding: loopback peer, foreign Host → treated as remote → unpaired.

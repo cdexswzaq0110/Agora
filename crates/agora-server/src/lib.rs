@@ -8,14 +8,16 @@
 //! - State-changing requests must be same-origin JSON (CSRF / rebinding defence).
 
 mod auth;
+mod team_api;
 mod v2;
 
+use team_api::*;
 use v2::*;
 
 use agora_core::engine::GateDecision;
 use agora_core::scheduler::Schedule;
 use agora_core::templates::Template;
-use agora_core::{Engine, Event, Mode, SessionSpec, Status};
+use agora_core::{AssistantError, Engine, Event, Mode, SessionSpec, Status};
 use axum::{
     extract::{ConnectInfo, Path, Query, Request, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri},
@@ -132,6 +134,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/usage", get(usage))
         .route("/api/usage/refresh", post(usage_refresh))
         .route("/api/usage/probe-claude", post(probe_claude))
+        .route("/api/assistant/ask", post(assistant_ask))
+        .route("/api/team", get(team_info))
+        .route("/api/workflows", get(list_workflows).post(create_workflow))
+        .route("/api/workflows/{id}", get(get_workflow))
+        .route("/api/workflows/{id}/stages/{kind}/start", post(start_stage))
+        .route("/api/workflows/{id}/tasks/{task}/start", post(start_task))
+        .route("/api/workflows/{id}/export", post(export_workflow))
         .route("/api/projects", get(list_projects).post(create_project))
         .route("/api/projects/{id}", patch(update_project))
         .route("/api/sessions", get(list_sessions).post(create_session))
@@ -167,6 +176,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/pairing/rotate", post(pairing_rotate))
         .route("/api/pairing/devices/{id}", delete(revoke_device))
         .route("/api/network", post(set_network))
+        .route("/api/network/tailscale", post(enable_tailscale))
         .fallback(static_handler)
         .layer(middleware::from_fn_with_state(state.clone(), guard))
         .with_state(state)
@@ -195,6 +205,28 @@ impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
         ApiError::bad(format!("{e:#}"))
     }
+}
+
+#[derive(Deserialize)]
+struct AssistantAskBody {
+    message: String,
+    #[serde(default)]
+    history: Vec<AssistantHistory>,
+}
+
+#[derive(Deserialize)]
+struct AssistantHistory { role: String, text: String }
+
+async fn assistant_ask(State(st): State<AppState>, Json(b): Json<AssistantAskBody>) -> Result<Json<Value>, ApiError> {
+    let history = b.history.into_iter().map(|h| (h.role, h.text)).collect::<Vec<_>>();
+    // The persona is a local-only extension file (git-ignored); the public build uses a neutral one.
+    let persona = Assets::get("local/persona.txt").map(|f| String::from_utf8_lossy(&f.data).into_owned());
+    st.engine.ask_assistant(&b.message, &history, persona.as_deref()).await.map(Json).map_err(|e| match e {
+        AssistantError::Busy => ApiError(StatusCode::CONFLICT, e.to_string()),
+        AssistantError::Invalid(_) => ApiError(StatusCode::BAD_REQUEST, e.to_string()),
+        AssistantError::Unavailable(_) => ApiError(StatusCode::SERVICE_UNAVAILABLE, e.to_string()),
+        AssistantError::Failed(_) => ApiError(StatusCode::BAD_GATEWAY, e.to_string()),
+    }).map(|Json(a)| Json(json!(a)))
 }
 
 type ApiResult<T> = Result<Json<T>, ApiError>;
@@ -252,7 +284,18 @@ async fn whoami(State(st): State<AppState>, axum::Extension(c): axum::Extension<
         "device": c.device,
         "version": agora_core::VERSION,
         "demo": st.engine.providers().iter().any(|p| p.is_mock()),
+        "extensions": local_extensions(),
     }))
+}
+
+/// Local-only UI extensions under `web/local/` (git-ignored, embedded only when the files exist
+/// at build time). The page loads each one it is told about; nothing else references them.
+fn local_extensions() -> Vec<&'static str> {
+    let mut v = Vec::new();
+    if Assets::get("local/pet.js").is_some() {
+        v.push("pet");
+    }
+    v
 }
 
 #[derive(Deserialize)]
@@ -561,6 +604,8 @@ async fn pairing_info(State(st): State<AppState>) -> Json<Value> {
     let lan_candidates = auth::lan_candidates().await;
     let selected_lan = auth::select_lan_candidate(&lan_candidates, auth::lan_ip());
     let ts = auth::tailscale_info().await;
+    // The real HTTPS mapping to this Agora, if any (v0.4 guessed :443 — see auth.rs).
+    let serve_url = if ts.is_some() { auth::tailscale_serve_url(st.port).await } else { None };
     Json(json!({
         "code": code,
         "expires_at": expires_at,
@@ -573,11 +618,18 @@ async fn pairing_info(State(st): State<AppState>) -> Json<Value> {
         "tailscale": ts.map(|(ip, dns)| json!({
             "ip": ip,
             "dns": dns,
-            "serve_command": format!("tailscale serve --bg {}", st.port),
-            "https_url": dns.as_ref().map(|d| format!("https://{}/", d.trim_end_matches('.'))),
+            "serve_ready": serve_url.is_some(),
+            "https_url": serve_url,
         })),
         "devices": s.devices.iter().map(|d| json!({ "id": d.id, "name": d.name, "created_at": d.created_at, "last_seen": d.last_seen })).collect::<Vec<_>>(),
     }))
+}
+
+/// Local-only (under `/api/network`): add an HTTPS `tailscale serve` mapping to this Agora on a
+/// free port. Never replaces an existing mapping.
+async fn enable_tailscale(State(st): State<AppState>) -> Result<Json<Value>, ApiError> {
+    auth::enable_tailscale_serve(st.port).await.map_err(ApiError::bad)?;
+    Ok(pairing_info(State(st)).await)
 }
 
 async fn pairing_rotate(State(st): State<AppState>) -> Json<Value> {
@@ -616,6 +668,7 @@ fn content_type(path: &str) -> &'static str {
         "webmanifest" => "application/manifest+json",
         "svg" => "image/svg+xml",
         "png" => "image/png",
+        "webp" => "image/webp",
         "ico" => "image/x-icon",
         "woff2" => "font/woff2",
         _ => "application/octet-stream",

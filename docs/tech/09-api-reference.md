@@ -71,6 +71,26 @@
 | DELETE | `/api/schedules/{id}` | P | 刪除排程 |
 | POST | `/api/schedules/{id}/run` | P | 立即執行一次 |
 
+## 專案團隊（v0.5）
+
+設計與紅隊修訂見 [14 · 專案團隊工作流](14-team-workflow.md)。階段就是一般的 plan-only 工作坊議題：核准、修訂、段落留言都用 `/api/sessions/{id}/decide`。
+
+| 方法 | 路徑 | 權限 | 說明 |
+|---|---|---|---|
+| GET | `/api/team` | P | 18 個角色（`id, name, title, group, group_label, duty`）、5 個階段、各深度的呼叫數與上限（`depths.{quick,standard,full}.{general,ai}.{calls,cap}`）、`max_idea_chars` |
+| GET | `/api/workflows?project_id=` | P | `WorkflowView[]`；每次讀取都先從議題狀態對帳 |
+| POST | `/api/workflows` | P | `{project_id, title?, idea, depth, kind, claude?, gpt?}` → `WorkflowView`；構想上限 8,000 字 |
+| GET | `/api/workflows/{id}` | P | `WorkflowView`：工作流本身，加上 `next`、各階段的呼叫計畫 `plans`、`calls_used`、`cap`；不存在 404 |
+| POST | `/api/workflows/{id}/stages/{kind}/start` | P | `kind` = `discovery`／`feasibility`／`product`／`design`／`tasks`；body `{}` 或 `{"raise_cap": true}`。回傳該階段的議題（進行中或等待核准時回傳同一個，冪等）。會超過工作流呼叫上限時 **409**，帶 `raise_cap` 確認後才開始；上游未核准或已過期時 400 |
+| POST | `/api/workflows/{id}/tasks/{task}/start` | P | 把任務交給工作坊（Claude＋GPT、隔離 worktree）；同一個任務重複點擊回傳同一個議題 |
+| POST | `/api/workflows/{id}/export` | L | 把各階段文件寫進專案 `docs/agora/<id>/<nn>-<stage>-r<rev>.md`，回傳 `{paths}` |
+
+## 助理聊天（v0.5）
+
+| 方法 | 路徑 | 權限 | 說明 |
+|---|---|---|---|
+| POST | `/api/assistant/ask` | P | `{message, history?}`（訊息 ≤ 2,000 字、history 取最後 8 筆、role 只接受「使用者」「助理」）→ `{text, provider, model}`。唯讀、推理強度 low（模型支援時）、逾時 3 分鐘、沿用額度保護。同時只允許一個請求（409）；沒有可用模型 503；模型失敗 502。角色段落預設是中性的「Agora 的助理」；本機擴充可用 `web/local/persona.txt` 替換（只換角色段落，規則固定附上） |
+
 ## SSE 事件
 
 `/api/sessions/{id}/events` 送出的事件（JSON 的 `type` 欄位）：
@@ -88,4 +108,4 @@
 | `quota` | `snapshot` | 額度更新 |
 | `lagged` | — | 用戶端跟不上，應該重新抓一次紀錄 |
 
-`/api/events`（全域串流）只送低頻事件：先送 `hello`（附目前所有額度），之後是 `status`、`quota`、`digest`。`digest` 的欄位是 `status`（running、done、failed）、`date`、`error`。
+`/api/events`（全域串流）只送低頻事件：先送 `hello`（附目前所有額度），之後是 `status`、`quota`、`digest`、`workflow`。`digest` 的欄位是 `status`（running、done、failed）、`date`、`error`。`workflow`（v0.5）的欄位是 `workflow_id`、`title`、`status`（active、stopped、done）、`next`（下一個要處理的階段）、`awaiting`（等你核准的階段議題 id）。

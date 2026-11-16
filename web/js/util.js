@@ -6,6 +6,15 @@ const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
 export const pad2 = (n) => String(n).padStart(2, '0');
 
+/** Run `fn` on the next frame — or after 250 ms when requestAnimationFrame does not fire
+ * (hidden or throttled pages, lessons/0005). Every coalesced repaint goes through this. */
+export function nextFrame(fn) {
+  let done = false;
+  const run = () => { if (!done) { done = true; fn(); } };
+  requestAnimationFrame(run);
+  setTimeout(run, 250);
+}
+
 export const store = {
   get(k, d) { try { const v = localStorage.getItem('agora:' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('agora:' + k, JSON.stringify(v)); } catch { /* private mode */ } },

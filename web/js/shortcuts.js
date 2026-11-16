@@ -4,7 +4,7 @@
 // with Ctrl/Alt/Meta held, or while a dialog is open.
 import { $, store } from './util.js';
 
-const PAGES = { h: ['#/', '議題'], d: ['#/digest', '情報'], u: ['#/usage', '用量'], s: ['#/settings', '設定'] };
+const PAGES = { t: ['#/', '團隊'], h: ['#/sessions', '議題'], d: ['#/digest', '情報'], u: ['#/usage', '用量'], s: ['#/settings', '設定'] };
 const SEQ_MS = 1500;
 let pendingG = 0;
 let dialog = null;
@@ -40,6 +40,7 @@ function ensureDialog() {
         <dt><kbd>?</kbd></dt><dd>開關這個說明</dd>
         ${Object.entries(PAGES).map(([k, [, zh]]) => `<dt><kbd>g</kbd> <kbd>${k}</kbd></dt><dd>前往「${zh}」</dd>`).join('')}
         <dt><kbd>Ctrl</kbd>／<kbd>⌘</kbd> + <kbd>Enter</kbd></dt><dd>在議題輸入框裡開始議題</dd>
+        <dt><kbd>Ctrl</kbd>／<kbd>⌘</kbd> + <kbd>K</kbd></dt><dd>開關命令面板</dd>
       </dl>
       <label class="check"><input type="checkbox" id="scToggle"> 啟用單鍵快捷鍵（? 與 g 系列）</label>
       <p class="muted">在輸入框裡、輸入法組字時不會觸發。這個設定只存在這台裝置。</p>

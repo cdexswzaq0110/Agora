@@ -175,7 +175,7 @@ pub(crate) async fn pairing_qr(State(st): State<AppState>, Query(q): Query<QrQue
     let requested_ip = validated_qr_ip(q.ip.as_deref(), &candidates)?;
     let selected_ip = requested_ip.or_else(|| auth::select_lan_candidate(&candidates, auth::lan_ip()).map(|candidate| candidate.ip));
     let lan = selected_ip.zip(st.lan_port().await).map(|(ip, p)| format!("http://{ip}:{p}/"));
-    let ts = auth::tailscale_info().await.and_then(|(_, dns)| dns).map(|d| format!("https://{}/", d.trim_end_matches('.')));
+    let ts = auth::tailscale_serve_url(st.port).await;
     let base = match q.target.as_deref() {
         Some("lan") => lan,
         Some("tailscale") => ts,

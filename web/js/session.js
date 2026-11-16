@@ -1,11 +1,12 @@
 // Session view (v0.3): outcome first, discussion folded by round with one-line summaries,
 // phase index in the rail, approval gate as "plan document + sticky decision column",
 // secondary actions under 更多. Live over SSE. See docs/design/2026-11-16-ui-v0.3.
-import { $, $$, api, copyText, dur, esc, num, pad2, stamp, toast } from './util.js';
+import { $, $$, api, copyText, dur, esc, nextFrame, num, pad2, stamp, toast } from './util.js';
 import { GRADE, md, inline } from './md.js';
 import { S, MODES, ROLE_ZH, STATUS_ZH, FAMILY, WORKSHOP_STEPS, saveComposer, chip } from './state.js';
 import { voiceButton, bindVoice } from './voice.js';
 import { announce } from './attention.js';
+import { loadTeamInfo } from './team.js';
 
 const view = () => $('#view');
 const live = (r) => r && (r.status === 'running' || r.status === 'awaiting_approval');
@@ -35,7 +36,9 @@ export async function renderSession(id) {
   S.gateUi = { reviseOpen: false, reviseText: '', verify: null, comments: [] };
   S.planTab = 'preview';
   S.memLine = null;
-  view().innerHTML = `<div id="sHead" class="session-head"><a class="back" href="#/">← 議題</a><h1 id="sTitle" tabindex="-1">載入中…</h1></div>
+  S.discoveryAnswers = {};
+  S.stageWorkflowTitle = null;
+  view().innerHTML = `<div id="sHead" class="session-head"><a class="back" href="#/sessions">← 議題</a><h1 id="sTitle" tabindex="-1">載入中…</h1></div>
     <div id="sSticky" class="session-sticky" hidden aria-hidden="true"></div>
     <div id="sStepper"></div>
     <div id="sGate"></div>
@@ -61,6 +64,16 @@ export async function renderSession(id) {
     try { await api(`/api/sessions/${encodeURIComponent(id)}/interject`, { method: 'POST', body: { text: ta.value } }); ta.value = ''; toast('已送出，下一則發言會看到'); }
     catch (err) { toast(err.message, true); }
   });
+  try {
+    const rec = await api(`/api/sessions/${encodeURIComponent(id)}`);
+    if (rec.spec.stage) {
+      const [info, workflow] = await Promise.all([loadTeamInfo(), api(`/api/workflows/${encodeURIComponent(rec.spec.stage.workflow_id)}`)]);
+      S.teamInfo = info;
+      S.stageWorkflowTitle = workflow.title || rec.spec.stage.workflow_id;
+    }
+    S.rec = rec;
+    paintSession();
+  } catch { /* the session stream reports the authoritative loading error */ }
   openStream(id);
 }
 
@@ -73,7 +86,7 @@ function openStream(id) {
     if (S.es !== es) return;
     if (S.rec && !live(S.rec)) { closeStream(); return; }
     try { const r = await api(`/api/sessions/${encodeURIComponent(id)}`); if (S.route.includes(id)) { S.rec = r; paintSession(); } }
-    catch (e) { if (!S.rec) $('#sHead').innerHTML = `<a class="back" href="#/">← 議題</a><p class="lede">${esc(e.message)}</p>`; closeStream(); }
+    catch (e) { if (!S.rec) $('#sHead').innerHTML = `<a class="back" href="#/sessions">← 議題</a><p class="lede">${esc(e.message)}</p>`; closeStream(); }
   };
 }
 
@@ -86,14 +99,8 @@ function openStream(id) {
 let frameQueued = false;
 let fullPending = false;
 const dirtyTurns = new Set();
-// requestAnimationFrame does not fire while the page is hidden (background tab, minimized
-// desktop window); a timer fallback guarantees the view still catches up (lessons/0005).
-function nextFrame(fn) {
-  let done = false;
-  const run = () => { if (!done) { done = true; fn(); } };
-  requestAnimationFrame(run);
-  setTimeout(run, 250);
-}
+// nextFrame (util.js): rAF with a timer fallback, because rAF does not fire while the page is
+// hidden (background tab, minimized desktop window; lessons/0005).
 function flushFrame() {
   frameQueued = false;
   if (fullPending) {
@@ -211,7 +218,7 @@ function turnHtml(t) {
   const wide = ['synthesizer', 'builder', 'reviewer', 'solo'].includes(t.role) || (t.role === 'judge' && S.rec.turns.filter((x) => x.role === 'judge').length === 1);
   const canFork = !running && t.ok && !live(S.rec);
   return `<article class="turn fam-${t.family}${collapsed ? ' collapsed' : ''}${wide ? ' wide' : ''}${t.seeded ? ' seeded' : ''}" id="turn-${t.index}">
-    <header><span class="who">${esc(FAMILY[t.family] || t.family)}</span><span class="role">${esc(ROLE_ZH[t.role] || t.role)}</span>${t.model ? `<span class="model">${esc(t.model)}</span>` : ''}${t.effort ? `<span class="model" title="推理強度">推理 ${esc(t.effort)}</span>` : ''}<span class="state">${state}</span>
+    <header><span class="who">${esc(FAMILY[t.family] || t.family)}</span><span class="role">${esc(ROLE_ZH[t.role] || t.role)}</span>${t.team_roles?.length ? `<span class="team-turn-roles">${t.team_roles.map((id) => S.teamInfo?.roles.find((r) => r.id === id)?.name || id).map(esc).join(' · ')}</span>` : ''}${t.model ? `<span class="model">${esc(t.model)}</span>` : ''}${t.effort ? `<span class="model" title="推理強度">推理 ${esc(t.effort)}</span>` : ''}<span class="state">${state}</span>
       ${canFork ? `<button class="fork" type="button" data-fork="${t.index}" title="從這則之後分岔出新議題">分岔 ↗</button>` : ''}</header>
     ${tools}
     <div class="body md${running ? ' cursor' : ''}">${t.text ? md(t.text) : running ? '<p class="muted">等待模型回應…</p>' : ''}</div>
@@ -259,14 +266,19 @@ function roundTitle(r, round, items) {
 
 function stepperHtml(r) {
   if (r.spec.mode !== 'workshop') return '';
+  const stage = r.spec.stage;
   let steps = WORKSHOP_STEPS.slice();
   if (r.spec.plan_only) steps = steps.slice(0, 4);
+  // A team stage (v0.5) has its own phases: producers → (integrator) → the gate.
+  if (stage) steps = stage.integrator ? ['團隊產出', '審查與整合', '等待核准'] : ['團隊產出', '等待核准'];
   const phase = r.phase || '';
-  const map = { 紅隊審視: '整合', 修訂方案: '整合', 已收到決定: '等待核准', 修訂實作: '實作' };
+  const map = stage
+    ? { 修訂方案: stage.integrator ? '審查與整合' : '團隊產出', 已收到決定: '等待核准' }
+    : { 紅隊審視: '整合', 修訂方案: '整合', 已收到決定: '等待核准', 修訂實作: '實作' };
   const cur = steps.indexOf(map[phase] || phase);
   const finished = !live(r);
-  const reached = finished ? (r.turns.some((t) => t.role === 'builder') ? steps.length : 4) : cur;
-  return `<ol class="stepper" aria-label="方案工作坊進度">${steps.map((s, i) => {
+  const reached = finished ? (stage ? steps.length : r.turns.some((t) => t.role === 'builder') ? steps.length : 4) : cur;
+  return `<ol class="stepper" aria-label="${stage ? '團隊階段進度' : '方案工作坊進度'}">${steps.map((s, i) => {
     const cls = finished ? (i < reached ? 'done' : 'skip') : i < cur ? 'done' : i === cur ? 'now' : '';
     return `<li class="${cls}"${cls === 'now' ? ' aria-current="step"' : ''}><span>${pad2(i + 1)}</span>${esc(s)}</li>`;
   }).join('')}</ol>`;
@@ -348,7 +360,7 @@ function gateHtml(r) {
   const suggested = suggestedVerify(p.text);
   return `<section class="plan-gate" aria-labelledby="gateTitle">
     <div class="top"><span class="eyebrow">Approval · 等你核准</span><span class="status-pill"><span class="dot live"></span>第 ${p.revision + 1} 版方案${p.feedback.length ? ` · 已修訂 ${p.feedback.length} 次` : ''}</span></div>
-    <h2 id="gateTitle">兩個模型討論出來的方案在這裡。看過、需要的話改一改，再決定要不要實作。</h2>
+    <h2 id="gateTitle">${r.spec.stage ? '團隊整理好這個階段的文件了。看過、需要的話改一改，再決定要不要核准。' : '兩個模型討論出來的方案在這裡。看過、需要的話改一改，再決定要不要實作。'}</h2>
     <a class="jump-decide" href="#planActions" data-jump-decide="1">跳到核准決定 ↓</a>
     <div class="plan-layout">
       <div class="plan-document">
@@ -361,8 +373,9 @@ function gateHtml(r) {
         </div>
       </div>
       <aside class="plan-actions" id="planActions" aria-label="核准決定">
+        ${discoveryQuestionsHtml(r)}
         ${r.spec.plan_only ? '<p class="hint">這個議題只產出方案；核准後就結束，不會實作。</p>' : `<label class="field"><span>驗證指令</span><input type="text" id="planVerify" value="${esc(S.gateUi.verify ?? verify)}" placeholder="${esc(suggested ? `方案建議：${suggested}` : '例如 cargo test')}"><small>強烈建議：有它才可能得到「已確認」</small></label>`}
-        <button class="btn primary block" type="button" id="approveBtn">${r.spec.plan_only ? '核准方案' : '核准並開始實作 ↗'}</button>
+        <button class="btn primary block" type="button" id="approveBtn" data-magnetic>${r.spec.plan_only ? '核准方案' : '核准並開始實作 ↗'}</button>
         ${commentsHtml(p)}
         <button class="btn block" type="button" id="reviseToggle" aria-expanded="${S.gateUi.reviseOpen}" aria-controls="reviseBox"${p.revision >= 2 ? ' disabled title="已達修訂上限（2 次）"' : ''}>要求修訂${p.revision >= 2 ? '（已達上限）' : S.gateUi.comments.length ? `（含 ${S.gateUi.comments.length} 則留言）` : ''}</button>
         <div id="reviseBox" class="revise-box"${S.gateUi.reviseOpen ? '' : ' hidden'}>
@@ -374,6 +387,21 @@ function gateHtml(r) {
       </aside>
     </div>
   </section>`;
+}
+
+function discoveryQuestions(r) {
+  if (r.spec.stage?.kind !== 'discovery') return [];
+  const lines = String(r.plan?.text || '').split(/\r?\n/);
+  const start = lines.findIndex((line) => /^##\s*待你回答的問題/.test(line));
+  if (start < 0) return [];
+  const end = lines.findIndex((line, i) => i > start && /^##\s+/.test(line));
+  return lines.slice(start + 1, end < 0 ? undefined : end).map((line) => line.match(/^\s*\d+[.)、]\s*(.+?)\s*$/)?.[1]).filter(Boolean).slice(0, 7);
+}
+
+function discoveryQuestionsHtml(r) {
+  const questions = discoveryQuestions(r);
+  if (!questions.length) return '';
+  return `<fieldset class="discovery-answers"><legend>待你回答的問題</legend><p>回答會附在核准文件後，成為後續階段的條件。</p>${questions.map((question, i) => `<label class="field"><span>${i + 1}. ${esc(question)}</span><input type="text" data-discovery-answer="${i}" value="${esc(S.discoveryAnswers[i] || '')}" placeholder="留空則沿用建議的預設"></label>`).join('')}</fieldset>`;
 }
 
 function planBoxHtml(r) {
@@ -504,7 +532,10 @@ function headHtml(r, isLive) {
   const m = MODES[r.spec.mode];
   const done = !isLive;
   const status = r.status === 'running' && r.phase ? r.phase : STATUS_ZH[r.status];
-  return `<a class="back" href="#/">← 議題</a>
+  const stage = r.spec.stage;
+  const stageName = stage ? S.teamInfo?.stages.find((s) => s.kind === stage.kind)?.label || stage.kind : '';
+  return `<a class="back" href="#/sessions">← 議題</a>
+    ${stage ? `<nav class="team-breadcrumb" aria-label="麵包屑"><a href="#/team">專案團隊</a><span>›</span><a href="#/w/${esc(stage.workflow_id)}">${esc(S.stageWorkflowTitle || stage.workflow_id)}</a><span>›</span><span aria-current="page">${esc(stageName)}</span></nav>` : ''}
     <p class="eyebrow">${m.en} · ${m.zh}${proj ? ' · ' + esc(proj.name) : ''} · ${esc(stamp(r.created_at))}${r.spec.blind ? ' · 盲審' : ''}${r.spec.group_id ? ` · <a href="#/x/${esc(r.spec.group_id)}">同題比較 ↗</a>` : ''}</p>
     <h1 id="sTitle" tabindex="-1">${esc(r.title)}</h1>
     <div class="toolbar">
@@ -680,7 +711,7 @@ function bindSession() {
     Object.assign(S.c, { access: s.access, verify: s.verify_command || '', prompt: s.prompt, blind: s.blind, redTeam: s.red_team, planOnly: s.plan_only, autoApprove: false, seed: null });
     S.projectId = s.project_id;
     saveComposer();
-    location.hash = '#/';
+    location.hash = '#/sessions';
   });
   $$('[data-export]', view()).forEach((b) => {
     b.onclick = async () => {
@@ -720,11 +751,18 @@ function bindSession() {
   if (pv) pv.oninput = () => { S.gateUi.verify = pv.value; };
   const rt = $('#reviseText');
   if (rt) rt.oninput = () => { S.gateUi.reviseText = rt.value; };
+  $$('[data-discovery-answer]').forEach((input) => { input.oninput = () => { S.discoveryAnswers[input.dataset.discoveryAnswer] = input.value; }; });
   on('#approveBtn', async () => {
     const n = S.gateUi.comments.length;
     if (n && !confirm(`你有 ${n} 則段落留言還沒送出。核准會忽略這些留言，確定要核准嗎？`)) return;
     const ta = $('#planText');
-    const plan = ta ? ta.value : S.planEdit;
+    let plan = ta ? ta.value : S.planEdit;
+    const questions = discoveryQuestions(r);
+    const hasAnswers = questions.some((_, i) => (S.discoveryAnswers[i] || '').trim());
+    if (hasAnswers) {
+      const base = plan ?? r.plan.text;
+      plan = `${base}\n\n## 你的回答\n${questions.map((question, i) => `${i + 1}. ${question} → ${(S.discoveryAnswers[i] || '').trim() || '（沿用建議的預設）'}`).join('\n')}`;
+    }
     const verify = $('#planVerify')?.value ?? null;
     try {
       await api(`/api/sessions/${encodeURIComponent(id)}/decide`, { method: 'POST', body: { action: 'approve', plan: plan ?? null, verify_command: verify } });
@@ -868,7 +906,7 @@ function bindSession() {
       S.c.prompt = r.spec.prompt;
       S.projectId = r.spec.project_id;
       saveComposer();
-      location.hash = '#/';
+      location.hash = '#/sessions';
       toast(`分岔：會延續前 ${upto + 1} 則發言，請調整議題或模式後開始`);
     }
   };

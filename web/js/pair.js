@@ -14,7 +14,8 @@ export function renderPair(onPaired) {
   $('#view').innerHTML = `<div class="pair-screen"><form class="pair-card" id="pairForm">
     <p class="eyebrow">Pair · 配對這台裝置</p>
     <h1 style="margin:0;font:600 1.5rem/1.3 var(--font-display)">${code ? '確認配對' : '輸入電腦上的配對碼'}</h1>
-    <p class="muted" style="margin:0;font-size:.9rem">電腦的 Agora「設定 → 手機連線」有 6 位數配對碼與 QR code。</p>
+    <p class="muted" style="margin:0;font-size:.9rem">在電腦打開 Agora →「設定 → 手機連線」（或頁尾的「手機連線」），那裡有 6 位數配對碼與 QR code。</p>
+    ${code ? '' : `<ol class="pair-help"><li>用手機相機掃電腦上的 QR code 最快，配對碼會自動帶入。</li><li>不在同一個 Wi-Fi 時：手機要先打開 Tailscale App，並登入和電腦同一個帳號。</li><li>配對碼 10 分鐘內有效；過期就看電腦上的新號碼。</li></ol>`}
     <input class="code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required aria-label="配對碼" value="${esc(code)}">
     <label class="field"><span>這台裝置的名稱</span><input type="text" name="name" value="${esc(name)}"></label>
     <button class="btn primary" type="submit">配對</button>

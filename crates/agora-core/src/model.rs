@@ -233,6 +233,10 @@ pub struct SessionSpec {
     pub group_id: Option<String>,
     #[serde(default)]
     pub template: Option<String>,
+    /// 專案團隊 (v0.5): this plan-only workshop runs one team stage (`team_stage()` in
+    /// modes.rs). Set only by the workflow engine; refused on sessions created directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<crate::team::StageSpec>,
 }
 
 impl SessionSpec {
@@ -258,6 +262,7 @@ impl SessionSpec {
             seed: None,
             group_id: None,
             template: None,
+            stage: None,
         }
     }
 }
@@ -307,6 +312,10 @@ pub struct Turn {
     /// `effort`, or the model's own default when the CLI reports it; `None` = unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_effort: Option<Effort>,
+    /// 專案團隊: the team roles (ids) this call was assigned — the only roles its sections
+    /// may account for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub team_roles: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

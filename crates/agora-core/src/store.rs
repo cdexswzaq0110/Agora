@@ -304,6 +304,38 @@ impl Store {
         serde_json::from_str(&fs::read_to_string(self.root.join("experiments").join(format!("{id}.json"))).ok()?).ok()
     }
 
+    /// 專案團隊 workflows (`workflows/<id>.json`, atomic writes; ids are `w-` + hex only).
+    pub fn save_workflow(&self, w: &crate::team::Workflow) -> Result<()> {
+        if !crate::team::valid_workflow_id(&w.id) {
+            bail!("無效的工作流 id");
+        }
+        let dir = self.root.join("workflows");
+        fs::create_dir_all(&dir)?;
+        let _g = self.write_lock.lock().unwrap();
+        write_atomic(&dir.join(format!("{}.json", w.id)), &serde_json::to_vec_pretty(w)?)
+    }
+
+    pub fn load_workflow(&self, id: &str) -> Option<crate::team::Workflow> {
+        if !crate::team::valid_workflow_id(id) {
+            return None;
+        }
+        serde_json::from_str(&fs::read_to_string(self.root.join("workflows").join(format!("{id}.json"))).ok()?).ok()
+    }
+
+    pub fn workflows(&self) -> Vec<crate::team::Workflow> {
+        let mut v: Vec<crate::team::Workflow> = fs::read_dir(self.root.join("workflows"))
+            .map(|rd| {
+                rd.flatten()
+                    .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+                    .filter_map(|e| fs::read_to_string(e.path()).ok())
+                    .filter_map(|r| serde_json::from_str(&r).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        v.sort_by(|a: &crate::team::Workflow, b| b.created_at.cmp(&a.created_at));
+        v
+    }
+
     pub fn experiments(&self) -> Vec<crate::engine::Experiment> {
         let mut v: Vec<crate::engine::Experiment> = fs::read_dir(self.root.join("experiments"))
             .map(|rd| rd.flatten().filter_map(|e| fs::read_to_string(e.path()).ok()).filter_map(|r| serde_json::from_str(&r).ok()).collect())

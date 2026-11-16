@@ -21,10 +21,12 @@ pub mod quota;
 pub mod repo;
 pub mod scheduler;
 pub mod store;
+pub mod team;
 pub mod templates;
 pub mod verify;
 
 pub use engine::Engine;
+pub use engine::{AssistantAnswer, AssistantError};
 pub use event::Event;
 pub use grade::EvidenceGrade;
 pub use model::*;

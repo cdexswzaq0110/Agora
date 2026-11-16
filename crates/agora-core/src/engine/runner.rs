@@ -59,6 +59,8 @@ pub(crate) struct TurnPlan {
     pub round: u32,
     pub ask: String,
     pub access: Access,
+    /// 專案團隊: the roles this call plays (empty outside team stages).
+    pub team_roles: Vec<String>,
 }
 
 const PLANNING_ROLES: &[Role] = &[
@@ -73,7 +75,12 @@ const PLANNING_ROLES: &[Role] = &[
 
 impl Runner {
     pub fn plan(&self, p: &Participant, role: Role, round: u32, ask: String, access: Access) -> TurnPlan {
-        TurnPlan { participant: p.clone(), role, round, ask, access }
+        TurnPlan { participant: p.clone(), role, round, ask, access, team_roles: vec![] }
+    }
+
+    /// A read-only team-stage call that plays `roles`.
+    pub fn team_plan(&self, p: &Participant, role: Role, round: u32, ask: String, roles: &[String]) -> TurnPlan {
+        TurnPlan { team_roles: roles.to_vec(), ..self.plan(p, role, round, ask, Access::ReadOnly) }
     }
 
     /// Mode-local round `n` → session round (after any seeded rounds).
@@ -113,6 +120,7 @@ impl Runner {
         let _ = self.engine.store.save_session(&snapshot);
         self.engine.running.lock().await.remove(&self.session_id);
         self.engine.emit(Event::Status { session_id: self.session_id.clone(), title: snapshot.title, status, error });
+        self.sync_workflow().await;
     }
 
     pub async fn persist(&self) {
@@ -142,6 +150,14 @@ impl Runner {
         self.persist().await;
         self.engine.emit(Event::Phase { session_id: self.session_id.clone(), phase: phase.to_string() });
         self.engine.emit(Event::Status { session_id: self.session_id.clone(), title, status, error: None });
+        self.sync_workflow().await;
+    }
+
+    /// A team stage's workflow follows its session (reconciled from the record, idempotent).
+    async fn sync_workflow(&self) {
+        if let Some(st) = &self.spec.stage {
+            self.engine.sync_workflow(&st.workflow_id).await;
+        }
     }
 
     pub async fn visible_now(&self) -> usize {
@@ -183,7 +199,7 @@ impl Runner {
             self.note(NoteLevel::Guard, format!("已達本議題的發言上限（{} 次）——依設計停止，保留目前結果。", self.max_turns)).await;
             return Err(Stop::Budget(self.max_turns).into());
         }
-        let TurnPlan { participant, role, round, ask, access } = plan;
+        let TurnPlan { participant, role, round, ask, access, team_roles } = plan;
         let mut provider = self.engine.provider(&participant.provider).ok_or_else(|| anyhow!("找不到模型提供者 {}", participant.provider))?;
         let mut model = participant.model.clone().or_else(|| self.settings.default_models.get(provider.id()).cloned().filter(|m| !m.is_empty()));
 
@@ -264,7 +280,7 @@ impl Runner {
                 }
             }
             let approved_plan = r.plan.as_ref().filter(|p| p.approved).map(|p| p.text.clone());
-            let use_plan = matches!(role, Role::Builder | Role::Reviewer) && self.spec.mode == Mode::Workshop;
+            let use_plan = matches!(role, Role::Builder | Role::Reviewer) && self.spec.mode == Mode::Workshop && self.spec.stage.is_none();
             let prompt = prompts::build(&PromptContext {
                 project: &self.project,
                 spec: &self.spec,
@@ -298,6 +314,7 @@ impl Runner {
                 rerouted_from: rerouted_from.clone(),
                 effort,
                 effective_effort,
+                team_roles,
             };
             r.turns.push(turn.clone());
             r.updated_at = now_ms();

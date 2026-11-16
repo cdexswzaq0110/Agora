@@ -285,7 +285,7 @@ export async function renderHome() {
     </div>
 
     <div class="composer-foot">
-      <button class="btn primary" type="button" id="startBtn">開始 ↗</button>
+      <button class="btn primary" type="button" id="startBtn" data-magnetic>開始 ↗</button>
       <span class="hint" id="budgetHint"></span><span class="hint">· Ctrl + Enter</span>
       <span class="spacer"></span>
       ${voiceButton('prompt')}
