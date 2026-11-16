@@ -1,0 +1,7 @@
+/target/
+**/*.rs.bk
+*.log
+.agora-data/
+src-tauri/gen/
+.DS_Store
+Thumbs.db

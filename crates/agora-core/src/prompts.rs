@@ -1,0 +1,434 @@
+//! Prompt construction per role, and parsers for the structured lines we ask models to end
+//! with (`VERDICT:`, `整體證據等級：`, `勝方：`).
+
+use crate::compact::{summarize_extractive, char_len};
+use crate::grade::EvidenceGrade;
+use crate::model::*;
+
+/// Project memory is injected into every prompt, bounded to this many characters.
+pub const MEMORY_BUDGET: usize = 3000;
+
+pub struct PromptContext<'a> {
+    pub project: &'a Project,
+    pub spec: &'a SessionSpec,
+    pub family: Family,
+    pub role: Role,
+    pub round: u32,
+    pub access: Access,
+    pub transcript: &'a str,
+    pub interjections: &'a [String],
+    pub ask: &'a str,
+    /// 專案快照 (see `repo.rs`), for planning/discussion turns.
+    pub snapshot: Option<&'a str>,
+    /// The approved workshop plan, for build/review turns.
+    pub plan: Option<&'a str>,
+}
+
+/// Project memory for a prompt: verbatim when short, otherwise the entries most relevant to
+/// `query` (see `memory.rs`); falls back to an extractive summary for unstructured text.
+pub fn bounded_memory(memory: &str, query: &str) -> String {
+    let m = memory.trim();
+    if char_len(m) <= MEMORY_BUDGET {
+        return m.to_string();
+    }
+    let selected = crate::memory::select(m, query, MEMORY_BUDGET);
+    if char_len(&selected) <= MEMORY_BUDGET + 120 {
+        return selected;
+    }
+    format!(
+        "{}\n〔記憶壓縮：專案記憶原文 {} 字，此處為摘要〕",
+        summarize_extractive(m, MEMORY_BUDGET - 40),
+        char_len(m)
+    )
+}
+
+pub fn build(ctx: &PromptContext) -> String {
+    let access = match ctx.access {
+        Access::ReadOnly => "本輪為**唯讀**：可以閱讀專案檔案，但不要修改任何檔案、不要執行會改變狀態的指令。",
+        Access::Write => "本輪**可以修改**專案檔案來完成任務；完成後列出改了哪些檔案。不要執行破壞性的 git 操作（reset --hard、push --force 等）。",
+    };
+    let mut p = String::new();
+    p.push_str(&format!(
+        "你是 Agora 多模型協作平台中的一位成員（{}），本輪身分：**{}**（{} 模式，第 {} 輪）。\n",
+        ctx.family.label(),
+        ctx.role.label(),
+        ctx.spec.mode.label(),
+        ctx.round
+    ));
+    p.push_str(&format!("專案：{}（工作目錄：{}）\n", ctx.project.name, ctx.project.path));
+    p.push_str(access);
+    p.push_str("\n請使用與議題相同的語言回答（預設繁體中文）。重要主張請標註證據等級：【已確認】直接觀察或測試過、【推論】由已確認事實推得、【候選】合理但仍有其他可能、【未知】查過但找不到、【未驗證】宣稱但尚未測試。\n");
+
+    let memory = bounded_memory(&ctx.project.memory, &ctx.spec.prompt);
+    if !memory.is_empty() {
+        p.push_str("\n## 專案記憶（過去議題沉澱的決策與教訓）\n");
+        p.push_str(&memory);
+        p.push('\n');
+    }
+
+    if let Some(snap) = ctx.snapshot.filter(|s| !s.trim().is_empty()) {
+        p.push_str("\n## 專案快照（自動產生；細節請直接讀檔確認）\n");
+        p.push_str(snap.trim());
+        p.push('\n');
+    }
+
+    p.push_str("\n## 議題\n");
+    p.push_str(ctx.spec.prompt.trim());
+    p.push('\n');
+
+    if let Some(plan) = ctx.plan.filter(|s| !s.trim().is_empty()) {
+        p.push_str("\n## 核准的方案（以此為準；使用者已經審閱並核准）\n");
+        p.push_str(plan.trim());
+        p.push('\n');
+    }
+
+    if !ctx.transcript.trim().is_empty() {
+        p.push_str("\n## 目前為止的發言\n");
+        p.push_str(ctx.transcript.trim_end());
+        p.push('\n');
+    }
+
+    if !ctx.interjections.is_empty() {
+        p.push_str("\n## 使用者插話（優先考慮）\n");
+        for (i, t) in ctx.interjections.iter().enumerate() {
+            p.push_str(&format!("{}. {}\n", i + 1, t.trim()));
+        }
+    }
+
+    p.push_str("\n## 你這一輪的任務\n");
+    p.push_str(ctx.ask.trim());
+    p.push('\n');
+    p
+}
+
+// ---------------------------------------------------------------------------------------
+// Role asks
+
+pub fn ask_solo() -> String {
+    "直接完成上面的議題。先給結論，再給理由與做法；不確定之處要說明。".into()
+}
+
+pub fn ask_builder_initial() -> String {
+    "你是**執行者**。請完成議題中的工作（需要時閱讀/修改專案檔案）。\n\
+     結尾請附上「## 交付摘要」：做了什麼、改了哪些檔案、你認為該如何驗證、還有哪些已知限制。"
+        .into()
+}
+
+fn verify_block(v: Option<&VerifyRun>) -> String {
+    match v {
+        None => String::new(),
+        Some(v) => format!(
+            "\n\n驗證指令 `{}` 的結果：{}（exit code {}{}）。輸出尾段：\n```\n{}\n```",
+            v.command,
+            if v.ok { "通過" } else { "失敗" },
+            v.exit_code.map_or("無".to_string(), |c| c.to_string()),
+            if v.timed_out { "，逾時" } else { "" },
+            v.output_tail.trim()
+        ),
+    }
+}
+
+pub fn ask_builder_revise(verify: Option<&VerifyRun>) -> String {
+    format!(
+        "審查者要求修訂（見上方發言）。請逐條處理審查意見，必要時修改檔案。\
+         若你不同意某條意見，說明理由。{}\n結尾請附上「## 修訂摘要」：逐條列出處理方式。",
+        verify_block(verify)
+    )
+}
+
+pub fn ask_reviewer(verify: Option<&VerifyRun>) -> String {
+    format!(
+        "你是**審查者**（本輪唯讀）。請審查執行者最新的交付：正確性、遺漏、風險、是否真的完成議題。\
+         必要時直接閱讀專案檔案確認，不要只相信交付摘要。{}\n\
+         列出具體問題，每條標註嚴重度（高/中/低）。\n\
+         最後一行必須是 `VERDICT: APPROVE`（可以交付）或 `VERDICT: REVISE`（需要修訂）。",
+        verify_block(verify)
+    )
+}
+
+pub fn ask_panelist(round: u32) -> String {
+    if round <= 1 {
+        "你是**與談人**。這是第一輪，請**獨立**提出你的看法，不要揣測其他人會說什麼。\n\
+         結構：## 立場、## 理由、## 風險、## 我不確定的地方。"
+            .into()
+    } else {
+        "你是**與談人**。閱讀其他與談人的最新發言：明確指出你同意與不同意之處，\
+         若被說服就直說並修正立場，補充新的論點或反例。不要重複已經說過的內容。\n\
+         結構：## 回應、## 修正後的立場。"
+            .into()
+    }
+}
+
+pub fn ask_synthesizer() -> String {
+    "你是**總結者**。整合所有與談內容，保持中立，輸出：\n\
+     ## 共識\n## 分歧（列出各方立場與各自最強的理由）\n## 建議做法\n## 待驗證事項（要怎麼驗證）\n\
+     最後一行必須是 `整體證據等級：<已確認|推論|候選|未知|未驗證>`。"
+        .into()
+}
+
+pub fn ask_proponent(round: u32) -> String {
+    if round <= 1 {
+        "你是**正方**：提出並支持你認為最好的方案，給出主張、論證與證據。結構：## 主張、## 論證、## 預期反駁與回應。".into()
+    } else {
+        "你是**正方**：反駁反方最新的論點，並強化你的立場。對方說得對的地方可以承認並調整方案。結構：## 反駁、## 調整後的主張。".into()
+    }
+}
+
+pub fn ask_opponent(round: u32) -> String {
+    if round <= 1 {
+        "你是**反方**：質疑主流或直覺的方案，找出風險與盲點，並提出替代方案。結構：## 質疑、## 替代方案、## 論證。".into()
+    } else {
+        "你是**反方**：反駁正方最新的論點，並強化你的替代方案。對方說得對的地方可以承認並調整。結構：## 反駁、## 調整後的主張。".into()
+    }
+}
+
+pub fn ask_judge(cross: bool) -> String {
+    let neutrality = if cross {
+        "你是**裁判**之一（交叉裁判：雙方模型各自獨立裁決）。即使某一方與你是同一家模型，也必須保持中立，只依論證品質判斷。"
+    } else {
+        "你是**裁判**，保持中立，只依論證品質判斷。"
+    };
+    format!(
+        "{neutrality}\n輸出：## 裁決、## 成立的論點、## 被駁倒的論點、## 建議做法、## 待驗證事項。\n\
+         最後兩行必須是：\n`勝方：<正方|反方|平手>`\n`整體證據等級：<已確認|推論|候選|未知|未驗證>`"
+    )
+}
+
+pub fn ask_probe() -> String {
+    "只回覆兩個字：OK".into()
+}
+
+// --- 方案工作坊 (workshop) -------------------------------------------------------------
+
+pub fn ask_planner() -> String {
+    "你是**提案者**。請**獨立**提出你認為最好的方案，不要揣測其他人會怎麼提；必要時閱讀專案檔案確認現況（本輪唯讀）。\n\
+     結構：\n## 我理解的目標\n## 方案（做法與理由；考慮過但不採用的做法也簡短說明）\n## 實作步驟（編號）\n\
+     ## 會動到的檔案\n## 風險與對策\n## 驗證方式（具體的測試或指令）\n## 成本估計（小／中／大，以及原因）"
+        .into()
+}
+
+pub fn ask_critic() -> String {
+    "你是**評論者**。閱讀上面所有的提案（包括你自己的），保持中立：\n\
+     1. 逐一指出每個提案的優點、缺點、遺漏與風險（具體到步驟或檔案）。\n\
+     2. 用表格替每個提案評分（1–5）：正確性、簡潔度、風險（越低分越危險）、成本、可測試性。\n\
+     3. 說出哪些部分可以組合成更好的方案，以及你會推薦的組合。\n\
+     如果你發現自己的提案比較差，請直說。"
+        .into()
+}
+
+pub fn ask_plan_synthesis() -> String {
+    "你是**總結者**。整合上面的提案與評論，產出一份**可以直接交給工程師實作**的最終方案。輸出：\n\
+     ## 提案評分\n（表格：各提案在正確性、簡潔度、風險、成本、可測試性的分數與一句理由）\n\
+     ## 最終方案\n\
+     ### 目標\n### 採用的做法與理由（說明採納、捨棄了哪些提案的哪些部分）\n### 實作步驟（編號 checklist）\n\
+     ### 會動到的檔案\n### 風險與對策\n### 驗收標準（編號；每一條都要能被檢查，例如可執行的測試或可觀察的行為）\n\
+     ### 建議的驗證指令\n### 不做的事\n\
+     最後一行必須是 `整體證據等級：<已確認|推論|候選|未知|未驗證>`。"
+        .into()
+}
+
+pub fn ask_red_team() -> String {
+    "你是**紅隊**。針對上面的「最終方案」，盡力找出會讓它失敗的情境：錯誤的假設、邊界條件、安全問題、\
+     遺漏的需求、過度設計、驗收標準無法驗證之處。每條標註嚴重度（高／中／低）並給出具體的修正建議。\
+     不要重寫整份方案；如果方案已經很好，就說明你檢查了哪些面向。"
+        .into()
+}
+
+pub fn ask_plan_revise(reason: &str) -> String {
+    format!(
+        "請根據{reason}修訂最終方案。先用 ## 修訂說明 條列改了什麼、為什麼；\
+         再輸出完整的 ## 最終方案（結構與前一版相同，驗收標準要完整列出）。\n\
+         最後一行必須是 `整體證據等級：<已確認|推論|候選|未知|未驗證>`。"
+    )
+}
+
+pub fn ask_build_from_plan() -> String {
+    "你是**執行者**。依照「核准的方案」實作，逐一完成實作步驟。遇到方案沒寫到的情況，選最保守的做法並在交付摘要說明；\
+     不要做方案「不做的事」裡列出的項目。\n\
+     結尾附上「## 交付摘要」：每個步驟的完成狀況、改了哪些檔案、你如何自我檢查、已知限制。"
+        .into()
+}
+
+pub fn ask_review_against_plan(verify: Option<&VerifyRun>) -> String {
+    format!(
+        "你是**審查者**（本輪唯讀）。對照「核准的方案」的**驗收標準**逐條檢查實作，請直接閱讀檔案，不要只相信交付摘要。{}\n\
+         輸出：\n## 驗收表\n（每條標準一行：✅ 符合／❌ 不符合／⚠️ 無法確認，附證據：檔案與位置，或指令輸出）\n\
+         ## 方案以外的問題\n（每條標註嚴重度 高／中／低）\n\
+         最後一行必須是 `VERDICT: APPROVE`（所有標準都符合）或 `VERDICT: REVISE`。",
+        verify_block(verify)
+    )
+}
+
+/// From the first heading containing `keyword` to the end of `text`, minus trailer lines.
+pub fn section_to_end(text: &str, keyword: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.iter().position(|l| {
+        let t = l.trim_start();
+        t.starts_with('#') && t.contains(keyword)
+    })?;
+    let body: Vec<&str> = lines[start + 1..]
+        .iter()
+        .copied()
+        .filter(|l| !l.contains("整體證據等級") && !l.to_ascii_uppercase().trim_start().starts_with("VERDICT"))
+        .collect();
+    let s = body.join("\n").trim().to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+/// The plan body from a synthesizer turn.
+pub fn extract_plan(text: &str) -> String {
+    section_to_end(text, "最終方案").unwrap_or_else(|| text.trim().to_string())
+}
+
+// ---------------------------------------------------------------------------------------
+// Parsers
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReviewDecision {
+    Approve,
+    Revise,
+}
+
+pub fn parse_review(text: &str) -> Option<ReviewDecision> {
+    text.lines().rev().find_map(|l| {
+        let u = l.to_ascii_uppercase();
+        let pos = u.find("VERDICT")?;
+        let rest = &u[pos + "VERDICT".len()..];
+        if rest.contains("APPROVE") {
+            Some(ReviewDecision::Approve)
+        } else if rest.contains("REVISE") {
+            Some(ReviewDecision::Revise)
+        } else {
+            None
+        }
+    })
+}
+
+fn value_after_colon(line: &str) -> Option<&str> {
+    let idx = line.find('：').map(|i| i + '：'.len_utf8()).or_else(|| line.find(':').map(|i| i + 1))?;
+    Some(line[idx..].trim())
+}
+
+pub fn parse_grade(text: &str) -> Option<EvidenceGrade> {
+    text.lines()
+        .rev()
+        .filter(|l| l.contains("證據等級"))
+        .find_map(|l| value_after_colon(l).and_then(EvidenceGrade::parse))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Winner {
+    Proponent,
+    Opponent,
+    Tie,
+}
+
+impl Winner {
+    pub fn label(self) -> &'static str {
+        match self {
+            Winner::Proponent => "正方",
+            Winner::Opponent => "反方",
+            Winner::Tie => "平手",
+        }
+    }
+}
+
+pub fn parse_winner(text: &str) -> Option<Winner> {
+    text.lines().rev().filter(|l| l.contains("勝方")).find_map(|l| {
+        let v = value_after_colon(l)?;
+        let v = v.trim_matches(|c: char| "`*<> ".contains(c));
+        if v.starts_with("正方") {
+            Some(Winner::Proponent)
+        } else if v.starts_with("反方") {
+            Some(Winner::Opponent)
+        } else if v.starts_with("平手") {
+            Some(Winner::Tie)
+        } else {
+            None
+        }
+    })
+}
+
+/// Content under the first heading (any level) containing `keyword`, up to the next heading.
+pub fn section(text: &str, keyword: &str) -> Option<String> {
+    let mut out = Vec::new();
+    let mut inside = false;
+    for l in text.lines() {
+        let t = l.trim_start();
+        if t.starts_with('#') && t.trim_start_matches('#').starts_with(' ') {
+            if inside {
+                break;
+            }
+            inside = t.contains(keyword);
+            continue;
+        }
+        if inside {
+            out.push(l);
+        }
+    }
+    let s = out.join("\n").trim().to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+/// Review issues: bullet lines that carry a severity tag.
+pub fn extract_issues(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| {
+            (l.starts_with("- ") || l.starts_with("* ") || l.chars().next().is_some_and(|c| c.is_ascii_digit()))
+                && ["高", "中", "低", "High", "high", "Medium", "Low"].iter().any(|k| l.contains(k))
+        })
+        .map(|l| crate::compact::truncate_chars(l.trim_start_matches(|c: char| "-*0123456789. ".contains(c)), 160))
+        .take(8)
+        .collect()
+}
+
+/// First meaningful line, stripped of markdown markers.
+pub fn headline(text: &str, max: usize) -> String {
+    let line = text
+        .lines()
+        .map(|l| l.trim().trim_start_matches(|c: char| "#>-* ".contains(c)).trim())
+        .find(|l| !l.is_empty() && !l.starts_with("```"))
+        .unwrap_or("");
+    crate::compact::truncate_chars(line, max)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn review_takes_the_last_verdict_line() {
+        let t = "先前提到 VERDICT: REVISE 的標準\n...\nVERDICT: APPROVE";
+        assert_eq!(parse_review(t), Some(ReviewDecision::Approve));
+        assert_eq!(parse_review("`verdict: revise`"), Some(ReviewDecision::Revise));
+        assert_eq!(parse_review("沒有結論"), None);
+    }
+
+    #[test]
+    fn grade_and_winner_parse_fullwidth_and_ascii_colons() {
+        let t = "## 裁決\n正方較強\n勝方：正方\n整體證據等級：推論";
+        assert_eq!(parse_grade(t), Some(EvidenceGrade::Inferred));
+        assert_eq!(parse_winner(t), Some(Winner::Proponent));
+        assert_eq!(parse_winner("勝方: `平手`"), Some(Winner::Tie));
+        assert_eq!(parse_grade("整體證據等級: <候選>"), Some(EvidenceGrade::Candidate));
+    }
+
+    #[test]
+    fn plan_extraction_keeps_subsections_and_drops_trailer() {
+        let t = "## 提案評分\n|a|b|\n## 最終方案\n### 目標\n做 X\n### 驗收標準\n1. 測試通過\n整體證據等級：推論";
+        let p = extract_plan(t);
+        assert!(p.starts_with("### 目標"));
+        assert!(p.contains("1. 測試通過"));
+        assert!(!p.contains("證據等級"));
+        assert_eq!(extract_plan("沒有標題的方案"), "沒有標題的方案");
+    }
+
+    #[test]
+    fn section_and_issues() {
+        let t = "## 問題\n- 【高】沒有處理空輸入\n- 【低】命名\n## 其他\n內容";
+        assert_eq!(section(t, "問題").unwrap().lines().count(), 2);
+        assert_eq!(extract_issues(t).len(), 2);
+        assert_eq!(headline("## 標題\n內文", 10), "標題");
+    }
+}

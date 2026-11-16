@@ -1,0 +1,20 @@
+[package]
+name = "agora-desktop"
+description = "Agora desktop app (Tauri): window, tray, always-on-top usage widget."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+agora-core = { path = "../crates/agora-core" }
+agora-server = { path = "../crates/agora-server" }
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-notification = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

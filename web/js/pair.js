@@ -1,0 +1,30 @@
+// Pairing screen for phones. A QR code from the desktop carries the code in the URL fragment
+// (`#pair=123456`) — fragments never leave the browser — and pre-fills it here.
+import { $, api, esc, toast } from './util.js';
+
+export function pairCodeFromHash() {
+  const m = location.hash.match(/pair=(\d{6})/);
+  return m ? m[1] : '';
+}
+
+export function renderPair(onPaired) {
+  const code = pairCodeFromHash();
+  const name = /iPhone|iPad/.test(navigator.userAgent) ? 'iPhone' : /Android/.test(navigator.userAgent) ? 'Android 手機' : '瀏覽器';
+  $('#view').innerHTML = `<div class="pair-screen"><form class="pair-card" id="pairForm">
+    <p class="eyebrow">Pair · 配對這台裝置</p>
+    <h1 style="margin:0;font:600 1.5rem/1.3 var(--font-display)">${code ? '確認配對' : '輸入電腦上的配對碼'}</h1>
+    <p class="muted" style="margin:0;font-size:.9rem">電腦的 Agora「設定 → 手機連線」有 6 位數配對碼與 QR code。</p>
+    <input class="code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required aria-label="配對碼" value="${esc(code)}">
+    <label class="field"><span>這台裝置的名稱</span><input type="text" name="name" value="${esc(name)}"></label>
+    <button class="btn primary" type="submit">配對</button>
+  </form></div>`;
+  $('#pairForm').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await api('/api/pair', { method: 'POST', body: { code: e.target.code.value.replace(/\s/g, ''), name: e.target.name.value } });
+      toast('配對完成');
+      history.replaceState(null, '', location.pathname + location.search + '#/');
+      await onPaired();
+    } catch (err) { toast(err.message, true); }
+  };
+}
