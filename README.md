@@ -20,7 +20,7 @@
 - **唯讀證明**：設定頁可以實際證明審查者寫不進檔案；沒證明過的，結論最高只到「推論」。
 - **Serendipity skill**：使用者自己的 harness [Serendipity-Epiphany](https://github.com/cdexswzaq0110/Serendipity-Epiphany) 升級為 v2.0.0——9 個核心 skill（Agent Skills 標準，Claude Code 與 Codex 共用）。Agora 依團隊階段與工作坊步驟**自己注入**對應的 skill（不靠 CLI 自動觸發），每則發言都記錄用了哪個 skill；Skills 頁看得到版本、驗證狀態與使用次數。[Serendipity-Epiphany-Codex](https://github.com/cdexswzaq0110/Serendipity-Epiphany-Codex) 改為從同一份來源同步 skill。
 - **用語**：「議題」改叫**專案**；原本的「專案」（工作資料夾）改叫**程式庫**。
-- 設計、互評與紅隊：[docs/design/2026-11-17-v0.6](docs/design/2026-11-17-v0.6/05-final-plan.md)；技術說明：[docs/tech/15](docs/tech/15-review-and-skills.md)；驗收清單：[docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。
+- 設計、互評與紅隊：[docs/design/2026-11-17-v0.6](docs/design/2026-11-17-v0.6/05-final-plan.md)；技術說明：[docs/tech/15](docs/tech/15-review-and-skills.md)；驗收清單：[docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)；Skill 使用說明：[docs/SKILLS.md](docs/SKILLS.md)。
 
 ## v0.5 重點：專案團隊
 

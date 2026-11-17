@@ -2,6 +2,7 @@
 
 > 原始碼：[`review.rs`](../../crates/agora-core/src/review.rs)（合約、審查回覆的驗證，純函式）、[`skills.rs`](../../crates/agora-core/src/skills.rs)（skill 登錄、對應表、注入）、`engine/modes.rs` 的 `plan_build_loop`、`git.rs` 的 `fingerprint`、[`harness/se/`](../../harness/se/)（Serendipity skill bundle 的固定副本）。
 > 設計：[docs/design/2026-11-17-v0.6](../design/2026-11-17-v0.6/05-final-plan.md)（Claude 與 GPT 提案、互評、整合；GPT 紅隊 15 條全部採用）。審查機制參考 [review-bridge](https://github.com/fortes1219/review-bridge)。
+> 使用者看的操作說明（怎麼用、在 Claude Code／Codex 用、怎麼改 skill）：[docs/SKILLS.md](../SKILLS.md)。
 
 ## 審查：由程式判定，不由模型自稱
 
