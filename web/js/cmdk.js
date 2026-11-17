@@ -11,13 +11,14 @@ let active = 0;
 let commands = [];
 
 const base = () => [
-  { id: 'home', label: '前往議題', search: 'sessions 議題 session', run: () => { location.hash = '#/sessions'; } },
+  { id: 'home', label: '前往專案', search: 'sessions 專案 session', run: () => { location.hash = '#/sessions'; } },
   { id: 'team', label: '前往團隊', search: 'team 專案 工作流 workflow home 首頁', run: () => { location.hash = '#/'; } },
   { id: 'digest', label: '前往情報', search: 'digest 技術情報', run: () => { location.hash = '#/digest'; } },
   { id: 'usage', label: '前往用量', search: 'usage 配額', run: () => { location.hash = '#/usage'; } },
+  { id: 'skills', label: 'Skills', search: 'skills 方法 能力 審查', run: () => { location.hash = '#/skills'; } },
   { id: 'phone', label: '手機連線（步驟、QR code、配對碼）', search: 'phone mobile iphone android tailscale qr 手機 配對 連線', run: () => { location.hash = '#/settings/phone'; } },
   { id: 'settings', label: '前往設定', search: 'settings preferences', run: () => { location.hash = '#/settings'; } },
-  { id: 'new', label: '開新議題', search: 'new session prompt 新增 開始', run: () => {
+  { id: 'new', label: '開新專案', search: 'new session prompt 新增 開始', run: () => {
     location.hash = '#/sessions';
     const focus = () => document.querySelector('#prompt')?.focus();
     setTimeout(focus, 0); setTimeout(focus, 250);
@@ -66,9 +67,9 @@ async function open() {
       run: () => { location.hash = `#/w/${workflow.id}`; },
     })), ...sessions.slice(0, 20).map((session, index) => ({
       id: `session-${index}`,
-      label: session.title || '未命名議題',
+      label: session.title || '未命名專案',
       meta: session.status || '',
-      search: `最近 議題 ${session.status || ''}`,
+      search: `最近 專案 ${session.status || ''}`,
       run: () => { location.hash = `#/s/${session.id}`; },
     })));
     if (dialog.open) paint();
@@ -80,7 +81,7 @@ function ensure() {
   dialog = document.createElement('dialog');
   dialog.className = 'cmdk-dialog';
   dialog.setAttribute('aria-labelledby', 'cmdkTitle');
-  dialog.innerHTML = `<div class="cmdk-shell"><h2 id="cmdkTitle" class="sr">命令面板</h2><label class="sr" for="cmdkInput">搜尋指令</label><input id="cmdkInput" type="search" role="combobox" aria-autocomplete="list" aria-controls="cmdkList" aria-expanded="true" placeholder="搜尋指令或最近議題…" autocomplete="off"><ul id="cmdkList" role="listbox"></ul><p class="cmdk-hint"><kbd>↑</kbd><kbd>↓</kbd> 選擇　<kbd>Enter</kbd> 執行　<kbd>Esc</kbd> 關閉</p></div>`;
+  dialog.innerHTML = `<div class="cmdk-shell"><h2 id="cmdkTitle" class="sr">命令面板</h2><label class="sr" for="cmdkInput">搜尋指令</label><input id="cmdkInput" type="search" role="combobox" aria-autocomplete="list" aria-controls="cmdkList" aria-expanded="true" placeholder="搜尋指令或最近專案…" autocomplete="off"><ul id="cmdkList" role="listbox"></ul><p class="cmdk-hint"><kbd>↑</kbd><kbd>↓</kbd> 選擇　<kbd>Enter</kbd> 執行　<kbd>Esc</kbd> 關閉</p></div>`;
   document.body.appendChild(dialog);
   input = dialog.querySelector('#cmdkInput'); list = dialog.querySelector('#cmdkList');
   input.addEventListener('input', () => { active = 0; paint(); });

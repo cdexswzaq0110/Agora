@@ -136,6 +136,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/usage/probe-claude", post(probe_claude))
         .route("/api/assistant/ask", post(assistant_ask))
         .route("/api/team", get(team_info))
+        .route("/api/skills", get(list_skills))
+        .route("/api/skills/prove-readonly", post(prove_readonly))
         .route("/api/workflows", get(list_workflows).post(create_workflow))
         .route("/api/workflows/{id}", get(get_workflow))
         .route("/api/workflows/{id}/stages/{kind}/start", post(start_stage))
@@ -392,7 +394,7 @@ async fn create_session(State(st): State<AppState>, Json(spec): Json<SessionSpec
 }
 
 async fn get_session(State(st): State<AppState>, Path(id): Path<String>) -> ApiResult<Value> {
-    st.engine.session(&id).await.map(|r| Json(json!(r))).ok_or_else(|| ApiError::not_found("找不到議題"))
+    st.engine.session(&id).await.map(|r| Json(json!(r))).ok_or_else(|| ApiError::not_found("找不到專案"))
 }
 
 #[derive(Deserialize)]
@@ -436,7 +438,7 @@ async fn session_events(
     // Subscribe before taking the snapshot so nothing falls between them; clients drop
     // duplicate deltas using `seq`.
     let rx = st.engine.subscribe();
-    let snap = st.engine.session(&id).await.ok_or_else(|| ApiError::not_found("找不到議題"))?;
+    let snap = st.engine.session(&id).await.ok_or_else(|| ApiError::not_found("找不到專案"))?;
     let first = sse_json(&json!({ "type": "snapshot", "session": snap }));
     let live = BroadcastStream::new(rx).filter_map(move |r| {
         let id = id.clone();
@@ -669,6 +671,12 @@ fn content_type(path: &str) -> &'static str {
         "svg" => "image/svg+xml",
         "png" => "image/png",
         "webp" => "image/webp",
+        "gif" => "image/gif",
+        "apng" => "image/apng",
+        "mp3" => "audio/mpeg",
+        "ogg" => "audio/ogg",
+        "wav" => "audio/wav",
+        "webm" => "video/webm",
         "ico" => "image/x-icon",
         "woff2" => "font/woff2",
         _ => "application/octet-stream",

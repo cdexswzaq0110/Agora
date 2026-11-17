@@ -13,7 +13,7 @@
 
 ```
 spec.isolate == false        → 直接寫入（Warn：已關閉隔離）
-專案不是 git repo            → 直接寫入（Warn）
+程式庫不是 git repo            → 直接寫入（Warn）
 create_worktree 失敗（例如還沒有 commit） → 直接寫入（Warn，附原因）
 否則                          → worktree（Info：分支、基準 commit、未 commit 的修改不包含在內）
 ```
@@ -31,7 +31,7 @@ sequenceDiagram
     A->>W: 執行者改檔、驗證指令
     A->>G: (in W) add -A; diff --cached --numstat <base>; diff --cached <base>
     A-->>A: 介面顯示檔案清單與逐行差異
-    alt 套用到專案
+    alt 套用到程式庫
         A->>G: (in W) diff --cached --binary <base>
         A->>P: (repo 根目錄) git apply --3way -
         A->>G: worktree remove --force; branch -D
@@ -44,7 +44,7 @@ sequenceDiagram
 
 `Workspace { kind: worktree|direct, path, root, branch, base, state: active|applied|discarded, message }`
 
-- 議題還在進行時不能套用或丟棄（`finished_record`）。
+- 專案還在進行時不能套用或丟棄（`finished_record`）。
 - 套用或丟棄只能做一次，重複操作會回錯誤。
 - `direct` 模式下，`/diff` 會改成顯示專案相對於 `HEAD` 的變更，可能包含你自己的未 commit 修改，介面上會註明。
 

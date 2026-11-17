@@ -24,14 +24,14 @@ fn turn_label(t: &Turn) -> String {
 pub fn session_markdown(r: &SessionRecord, project: Option<&Project>) -> String {
     let mut s = format!("# {}\n\n", r.title);
     s.push_str(&format!(
-        "- 模式：{}\n- 專案：{}\n- 建立：{}\n- 狀態：{:?}\n- Agora 議題：`{}`\n\n",
+        "- 模式：{}\n- 程式庫：{}\n- 建立：{}\n- 狀態：{:?}\n- Agora 專案：`{}`\n\n",
         r.spec.mode.label(),
         project.map(|p| p.name.as_str()).unwrap_or("—"),
         format_date(r.created_at),
         r.status,
         r.id
     ));
-    s.push_str("## 議題\n\n");
+    s.push_str("## 專案\n\n");
     s.push_str(r.spec.prompt.trim());
     s.push_str("\n\n");
     if let Some(v) = &r.verdict {
@@ -49,7 +49,7 @@ pub fn session_markdown(r: &SessionRecord, project: Option<&Project>) -> String 
     }
     s.push_str("## 發言紀錄\n\n");
     for t in &r.turns {
-        s.push_str(&format!("### {}{}\n\n", turn_label(t), if t.seeded { "（承接自上一個議題）" } else { "" }));
+        s.push_str(&format!("### {}{}\n\n", turn_label(t), if t.seeded { "（承接自上一個專案）" } else { "" }));
         if t.ok {
             s.push_str(t.text.trim());
         } else {
@@ -122,11 +122,11 @@ fn position_headlines(r: &SessionRecord) -> Vec<String> {
 }
 
 pub fn adr_markdown(r: &SessionRecord, number: u32) -> Result<String> {
-    let Some(v) = &r.verdict else { bail!("這個議題還沒有結論") };
+    let Some(v) = &r.verdict else { bail!("這個專案還沒有結論") };
     let options = position_headlines(r);
     let mut s = format!("# ADR-{number:04}: {}\n\n", r.title);
     s.push_str(&format!(
-        "- **Status**: proposed\n- **Date**: {}\n- **Evidence grade of the decision**: {}\n- **Source**: Agora 議題 `{}`（{}）\n\n",
+        "- **Status**: proposed\n- **Date**: {}\n- **Evidence grade of the decision**: {}\n- **Source**: Agora 專案 `{}`（{}）\n\n",
         format_date(r.created_at),
         v.grade.label(),
         r.id,
@@ -136,7 +136,7 @@ pub fn adr_markdown(r: &SessionRecord, number: u32) -> Result<String> {
     s.push_str(r.spec.prompt.trim());
     s.push_str("\n\n## Options considered\n\n");
     if options.is_empty() {
-        s.push_str("（見議題發言紀錄）\n");
+        s.push_str("（見專案發言紀錄）\n");
     }
     for o in options {
         s.push_str(&format!("1. {o}\n"));
@@ -164,10 +164,10 @@ pub fn write_adr(project_dir: &Path, r: &SessionRecord) -> Result<PathBuf> {
 
 pub fn lesson_markdown(r: &SessionRecord, number: u32) -> String {
     let date = format_date(r.created_at);
-    let mut s = format!("# {number:04} — {}\n\n- **Date**: {date}\n- **Grade**: 候選（草稿，請補上失敗證據後再升級）\n- **Source**: Agora 議題 `{}`\n\n", r.title, r.id);
+    let mut s = format!("# {number:04} — {}\n\n- **Date**: {date}\n- **Grade**: 候選（草稿，請補上失敗證據後再升級）\n- **Source**: Agora 專案 `{}`\n\n", r.title, r.id);
     s.push_str("## 發生了什麼\n\n");
     if let Some(e) = &r.error {
-        s.push_str(&format!("議題中止：{e}\n\n"));
+        s.push_str(&format!("專案中止：{e}\n\n"));
     }
     for t in r.turns.iter().filter(|t| !t.ok) {
         s.push_str(&format!("- {} 失敗：{}\n", turn_label(t), t.error.as_deref().unwrap_or("")));
@@ -241,6 +241,7 @@ mod tests {
             plan: None,
             workspace: None,
             phase: None,
+            reviews: vec![],
         }
     }
 

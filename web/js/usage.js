@@ -34,7 +34,7 @@ export async function renderUsage() {
       <div id="daily"></div>
     </section>
     <section class="block">
-      <div class="block-head"><span class="index">03 / Modes</span><h2>各模式表現</h2><span class="aside">「已確認」比例＝結論經驗證指令證實的議題占比</span></div>
+      <div class="block-head"><span class="index">03 / Modes</span><h2>各模式表現</h2><span class="aside">「已確認」比例＝結論經驗證指令證實的專案占比</span></div>
       <div id="modes"></div>
     </section>`;
   $('#refreshAll').onclick = async (e) => {
@@ -190,7 +190,7 @@ function lineChart(el, title, series, { yMax = 100, unit = '%' } = {}) {
 
 function columnChart(el, days) {
   const W = Math.max(280, el.clientWidth || 640), H = 240, L = 48, R = 12, T = 12, B = 28;
-  if (!days.length) { el.innerHTML = '<p class="muted">過去 30 天還沒有議題。</p>'; return; }
+  if (!days.length) { el.innerHTML = '<p class="muted">過去 30 天還沒有專案。</p>'; return; }
   const providers = [...new Set(days.flatMap((d) => Object.keys(d.by_provider || {})))].sort();
   const totals = days.map((d) => Object.values(d.by_provider || {}).reduce((a, b) => a + b, 0));
   const max = Math.max(...totals, 1);
@@ -218,7 +218,7 @@ function columnChart(el, days) {
   const legend = providers.length > 1 ? `<div class="legend">${providers.map((p) => `<span><i class="swatch" style="background:${seriesVar(p)}"></i>${esc(seriesName(p))}</span>`).join('')}</div>` : '';
   el.innerHTML = `<div class="chart-card"><h3>每日 tokens（輸入＋輸出）${providers.length === 1 ? ` · ${esc(seriesName(providers[0]))}` : ''}</h3>${legend}
     <svg class="chart" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="每日 tokens">${ticks}${bars}${labelsX}</svg>
-    <details class="table-view"><summary>表格檢視</summary><table><thead><tr><th>日期</th><th>議題</th><th>發言</th><th>輸入</th><th>輸出</th></tr></thead><tbody>${days.map((d) => `<tr><td>${esc(d.date)}</td><td>${d.sessions}</td><td>${d.turns}</td><td>${num(d.input_tokens)}</td><td>${num(d.output_tokens)}</td></tr>`).join('')}</tbody></table></details></div>`;
+    <details class="table-view"><summary>表格檢視</summary><table><thead><tr><th>日期</th><th>專案</th><th>發言</th><th>輸入</th><th>輸出</th></tr></thead><tbody>${days.map((d) => `<tr><td>${esc(d.date)}</td><td>${d.sessions}</td><td>${d.turns}</td><td>${num(d.input_tokens)}</td><td>${num(d.output_tokens)}</td></tr>`).join('')}</tbody></table></details></div>`;
   el.querySelectorAll('.bar').forEach((b) => {
     b.addEventListener('pointermove', (evt) => {
       const d = days[Number(b.dataset.i)];
@@ -256,17 +256,17 @@ function paintCharts() {
   const confirmed = st.by_mode.reduce((a, m) => a + m.confirmed, 0);
   const withVerdict = st.by_mode.reduce((a, m) => a + m.with_verdict, 0);
   $('#tiles').innerHTML = [
-    ['議題', num(sum((d) => d.sessions))],
+    ['專案', num(sum((d) => d.sessions))],
     ['模型發言', num(sum((d) => d.turns))],
     ['Tokens', compact(sum((d) => d.input_tokens + d.output_tokens))],
     ['已確認比例', withVerdict ? `${Math.round((confirmed / withVerdict) * 100)}%` : '—'],
   ].map(([l, v]) => `<div class="tile"><span>${esc(l)}</span><b>${esc(v)}</b></div>`).join('');
   columnChart($('#daily'), st.by_day);
-  $('#modes').innerHTML = st.by_mode.length ? `<table class="data"><thead><tr><th>模式</th><th>議題</th><th>發言</th><th>平均每題 tokens</th><th>已確認比例</th></tr></thead><tbody>${st.by_mode.map((m) => {
+  $('#modes').innerHTML = st.by_mode.length ? `<table class="data"><thead><tr><th>模式</th><th>專案</th><th>發言</th><th>平均每題 tokens</th><th>已確認比例</th></tr></thead><tbody>${st.by_mode.map((m) => {
     const name = MODES[m.mode]?.zh || m.mode;
     const avg = m.sessions ? (m.input_tokens + m.output_tokens) / m.sessions : 0;
     return `<tr><td>${esc(name)}</td><td>${m.sessions}</td><td>${m.turns}</td><td>${compact(Math.round(avg))}</td><td>${m.with_verdict ? `${Math.round((m.confirmed / m.with_verdict) * 100)}%` : '—'}</td></tr>`;
-  }).join('')}</tbody></table>` : '<p class="muted">過去 30 天還沒有議題。</p>';
+  }).join('')}</tbody></table>` : '<p class="muted">過去 30 天還沒有專案。</p>';
 }
 
 export { FAMILY };

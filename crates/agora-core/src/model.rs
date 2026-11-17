@@ -316,6 +316,9 @@ pub struct Turn {
     /// may account for.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub team_roles: Vec<String>,
+    /// v0.6: the skills this call received (program-written receipts, see `skills.rs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<crate::skills::SkillReceipt>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -403,6 +406,10 @@ pub struct Plan {
     /// set — the only valid anchors for section comments on *this* revision.
     #[serde(default)]
     pub blocks: Vec<PlanBlock>,
+    /// v0.6: the acceptance contract cut from the approved text by code and sealed with it
+    /// (`review.rs`). `None` until approval, or when the plan has no acceptance list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<crate::review::Contract>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
@@ -474,6 +481,60 @@ pub struct SessionRecord {
     /// Human-readable current phase (e.g. 提案, 互評, 整合, 等待核准, 實作, 驗證, 審查).
     #[serde(default)]
     pub phase: Option<String>,
+    /// v0.6: every review attempt of the build loop, persisted as it happens (red-team #2), so a
+    /// restart or a stop never loses which step was reached and on which version.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reviews: Vec<ReviewRecord>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewStage {
+    /// Every acceptance condition, by id, with evidence.
+    Spec,
+    /// Engineering quality, only after every condition passed.
+    Quality,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewOutcome {
+    /// The answer passed every program check and counts.
+    Accepted,
+    /// The answer failed a program check (see `problems`); it does not count.
+    Rejected,
+    /// The work changed while the reviewer read it; the answer does not count.
+    VersionChanged,
+    /// The reviewer's CLI call failed.
+    Failed,
+}
+
+/// One review attempt (red-team #2, #7, #8, #9).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReviewRecord {
+    /// Build round it reviewed.
+    pub round: u32,
+    pub stage: ReviewStage,
+    /// 1 = first answer, 2 = the one format retry.
+    pub attempt: u32,
+    pub turn: Option<u32>,
+    pub contract_sha256: String,
+    /// Worktree fingerprints (see `git::fingerprint`): before the verify command, when the
+    /// review was handed over, and after it ended. `None` = no git (unknown).
+    pub fp_verify: Option<String>,
+    pub fp_before: Option<String>,
+    pub fp_after: Option<String>,
+    pub outcome: ReviewOutcome,
+    #[serde(default)]
+    pub problems: Vec<String>,
+    #[serde(default)]
+    pub verdicts: Vec<crate::review::AcResult>,
+    #[serde(default)]
+    pub findings: Vec<crate::review::QualityFinding>,
+    /// The reviewer is the same model family as the builder (no cross-family independence).
+    #[serde(default)]
+    pub same_family: bool,
+    pub at: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

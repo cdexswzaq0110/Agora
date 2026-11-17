@@ -83,7 +83,7 @@ codex exec --json --skip-git-repo-check --ephemeral -C <cwd> -s read-only|worksp
   - Codex：讀 `~/.codex/models_cache.json` 的 `supported_reasoning_levels`／`default_reasoning_level`（和 `codex app-server` 的 `model/list` 同一份資料，但不必啟動程序）。「CLI 預設」那一項是所有模型的交集；沒有快取時用保守的 low/medium/high。
   - Claude：健康檢查時解析一次 `claude --help` 裡 `--effort` 列出的值；沒有這個選項或格式不符就是不支援。
 - 參數：Codex `-c model_reasoning_effort="<值>"`；Claude `--effort <值>`；沒有指定時兩者都不帶。
-- 驗證：建立議題時（介面、範本、排程、同題比較、MCP 都經過 `Engine::validate`），指定的值不在該模型的清單裡就回 400，不會靜默降級。設定頁的預設值只在模型支援時才套用，否則記一則說明；改派到另一個提供者時不帶原本的值。
+- 驗證：建立專案時（介面、範本、排程、同題比較、MCP 都經過 `Engine::validate`），指定的值不在該模型的清單裡就回 400，不會靜默降級。設定頁的預設值只在模型支援時才套用，否則記一則說明；改派到另一個提供者時不帶原本的值。
 - 稽核：`Turn.effort` 是實際傳出的值；`Turn.effective_effort` 是傳出的值，或 CLI 回報的模型預設值，否則為空（未知）。
 
 ## 行程管理（`proc.rs`、`stream.rs`、`resolve.rs`）

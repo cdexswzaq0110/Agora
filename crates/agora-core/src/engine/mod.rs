@@ -43,6 +43,9 @@ pub const HARD_TURN_CAP: u32 = 24;
 pub const MAX_PROMPT_CHARS: usize = 40_000;
 /// Human-requested plan revisions per workshop.
 pub const MAX_PLAN_REVISIONS: u32 = 2;
+/// v0.6: worst-case calls of one build round: the builder, the spec review and its one format
+/// retry, the quality review and its one format retry (red-team #1).
+pub const BUILD_ROUND_CALLS: u32 = 5;
 
 #[derive(Debug)]
 pub(crate) enum Stop {
@@ -54,7 +57,7 @@ impl std::fmt::Display for Stop {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Stop::Cancelled => write!(f, "已取消"),
-            Stop::Budget(n) => write!(f, "已達本議題的發言上限（{n} 次）"),
+            Stop::Budget(n) => write!(f, "已達本專案的發言上限（{n} 次）"),
         }
     }
 }
@@ -100,6 +103,9 @@ pub struct ProviderInfo {
     pub unsupported_models: Vec<String>,
     pub health: Option<Health>,
     pub quota: Option<QuotaSnapshot>,
+    /// v0.6: the last read-only proof (a refused write), and whether reviews may count on it.
+    pub readonly_proof: Option<crate::store::ReadonlyProof>,
+    pub readonly_proven: bool,
 }
 
 pub struct Engine {
@@ -178,7 +184,7 @@ impl Engine {
     fn recover_interrupted(&self) {
         for mut r in self.store.sessions().into_iter().filter(|r| r.status == Status::Running) {
             r.status = Status::Failed;
-            r.error = Some("Agora 結束時這個議題仍在進行，已標記為中斷".into());
+            r.error = Some("Agora 結束時這個專案仍在進行，已標記為中斷".into());
             r.updated_at = now_ms();
             let _ = self.store.save_session(&r);
         }
@@ -186,6 +192,13 @@ impl Engine {
 
     pub fn store(&self) -> &Store {
         &self.store
+    }
+
+    /// Has this provider's read-only mode been proven (a refused write)? Mocks never write in
+    /// read-only mode, so they count as proven.
+    pub fn reviewer_proven(&self, provider: &str) -> bool {
+        self.provider(provider).is_some_and(|p| p.is_mock())
+            || self.settings().readonly_proofs.get(provider).is_some_and(|p| p.ok)
     }
 
     pub fn settings(&self) -> Settings {
@@ -247,6 +260,8 @@ impl Engine {
                 unsupported_models: s.unsupported_models.get(p.id()).cloned().unwrap_or_default(),
                 health: health.get(p.id()).cloned(),
                 quota: quotas.get(p.id()).cloned(),
+                readonly_proof: s.readonly_proofs.get(p.id()).cloned(),
+                readonly_proven: p.is_mock() || s.readonly_proofs.get(p.id()).is_some_and(|x| x.ok),
             })
             .collect()
     }
@@ -358,7 +373,7 @@ impl Engine {
         let name = name.trim();
         let path = path.trim();
         if name.is_empty() {
-            bail!("請輸入專案名稱");
+            bail!("請輸入程式庫名稱");
         }
         if !std::path::Path::new(path).is_dir() {
             bail!("找不到資料夾：{path}");
@@ -372,7 +387,7 @@ impl Engine {
 
     pub fn update_project(&self, id: &str, name: Option<String>, path: Option<String>, memory: Option<String>) -> Result<Project> {
         let mut ps = self.projects();
-        let p = ps.iter_mut().find(|p| p.id == id).ok_or_else(|| anyhow!("找不到專案"))?;
+        let p = ps.iter_mut().find(|p| p.id == id).ok_or_else(|| anyhow!("找不到程式庫"))?;
         if let Some(n) = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()) {
             p.name = n;
         }
@@ -395,9 +410,9 @@ impl Engine {
     /// sentence: newlines removed, ≤ 300 chars, never empty; it keeps the `- [date] …【grade】`
     /// shape so the memory file stays uniform. `None` keeps the pre-v0.4 line.
     pub async fn remember(&self, session_id: &str, custom: Option<&str>) -> Result<Project> {
-        let rec = self.session(session_id).await.ok_or_else(|| anyhow!("找不到議題"))?;
-        let v = rec.verdict.as_ref().ok_or_else(|| anyhow!("這個議題還沒有結論"))?;
-        let project = self.project(&rec.spec.project_id).ok_or_else(|| anyhow!("找不到專案"))?;
+        let rec = self.session(session_id).await.ok_or_else(|| anyhow!("找不到專案"))?;
+        let v = rec.verdict.as_ref().ok_or_else(|| anyhow!("這個專案還沒有結論"))?;
+        let project = self.project(&rec.spec.project_id).ok_or_else(|| anyhow!("找不到程式庫"))?;
         if let Some(c) = custom {
             let one = c.split_whitespace().collect::<Vec<_>>().join(" ");
             if one.is_empty() {
@@ -486,7 +501,7 @@ impl Engine {
         if text.is_empty() {
             bail!("插話內容是空的");
         }
-        let ctl = self.running.lock().await.get(id).cloned().ok_or_else(|| anyhow!("議題已結束，無法插話"))?;
+        let ctl = self.running.lock().await.get(id).cloned().ok_or_else(|| anyhow!("專案已結束，無法插話"))?;
         let ij = Interjection { at: now_ms(), text: compact::truncate_chars(text, 4000), delivered: false };
         let snapshot = {
             let mut r = ctl.record.lock().await;
@@ -503,14 +518,14 @@ impl Engine {
         let mut notes = Vec::new();
         spec.prompt = spec.prompt.trim().to_string();
         if spec.prompt.is_empty() {
-            bail!("請輸入議題內容");
+            bail!("請輸入專案內容");
         }
         if spec.prompt.chars().count() > MAX_PROMPT_CHARS {
-            bail!("議題內容太長（上限 {MAX_PROMPT_CHARS} 字）");
+            bail!("專案內容太長（上限 {MAX_PROMPT_CHARS} 字）");
         }
-        let project = self.project(&spec.project_id).ok_or_else(|| anyhow!("找不到專案"))?;
+        let project = self.project(&spec.project_id).ok_or_else(|| anyhow!("找不到程式庫"))?;
         if !std::path::Path::new(&project.path).is_dir() {
-            bail!("專案資料夾不存在：{}", project.path);
+            bail!("程式庫資料夾不存在：{}", project.path);
         }
         spec.participants.retain(|p| !p.provider.trim().is_empty());
         for p in spec.participants.iter_mut().chain(spec.judge.iter_mut()).chain(spec.builder.iter_mut()).chain(spec.reviewer.iter_mut()) {
@@ -589,6 +604,17 @@ impl Engine {
                 }
                 if !spec.plan_only {
                     spec.access = Access::Write;
+                    // The worst case must fit the hard cap before anything is spent (red-team #1).
+                    let n = spec.participants.len() as u32;
+                    let planning = 2 * n + 1 + if spec.red_team { 2 } else { 0 } + MAX_PLAN_REVISIONS;
+                    let wanted = modes::rounds_for(&spec);
+                    let fit = (HARD_TURN_CAP.saturating_sub(planning) / BUILD_ROUND_CALLS).saturating_sub(1);
+                    if wanted > fit {
+                        spec.rounds = Some(fit);
+                        notes.push(format!(
+                            "實作修訂次數從 {wanted} 降為 {fit}：每輪最多 {BUILD_ROUND_CALLS} 次呼叫（實作、規格審查與一次格式重試、品質審查與一次格式重試），整個專案不能超過 {HARD_TURN_CAP} 次。"
+                        ));
+                    }
                 }
             }
         }
@@ -614,7 +640,7 @@ impl Engine {
             Mode::Workshop if spec.stage.is_some() => spec.stage.as_ref().map_or(1, |st| st.calls() as u32) + MAX_PLAN_REVISIONS,
             Mode::Workshop => {
                 let planning = 2 * n + 1 + if spec.red_team { 2 } else { 0 } + MAX_PLAN_REVISIONS;
-                planning + if spec.plan_only { 0 } else { 2 * rounds + 2 }
+                planning + if spec.plan_only { 0 } else { (rounds + 1) * BUILD_ROUND_CALLS }
             }
         };
         spec.max_turns.map_or(computed, |m| m.max(1).min(computed)).min(HARD_TURN_CAP)
@@ -642,7 +668,7 @@ impl Engine {
         let mut seeded = Vec::new();
         let mut fork_note = None;
         if let Some(seed) = &spec.seed {
-            let src = self.session(&seed.session_id).await.ok_or_else(|| anyhow!("找不到要分岔的議題"))?;
+            let src = self.session(&seed.session_id).await.ok_or_else(|| anyhow!("找不到要分岔的專案"))?;
             for t in src.turns.iter().filter(|t| t.index <= seed.upto && t.ended_at.is_some()) {
                 let mut c = t.clone();
                 c.index = seeded.len() as u32;
@@ -650,7 +676,7 @@ impl Engine {
                 c.delta_seq = 0;
                 seeded.push(c);
             }
-            fork_note = Some(format!("延續自議題「{}」的前 {} 則發言（分岔）。", src.title, seeded.len()));
+            fork_note = Some(format!("延續自專案「{}」的前 {} 則發言（分岔）。", src.title, seeded.len()));
         }
         let round_offset = seeded.iter().map(|t| t.round).max().unwrap_or(0);
 
@@ -671,8 +697,9 @@ impl Engine {
             plan: None,
             workspace: None,
             phase: None,
+            reviews: vec![],
         };
-        rec.notes.push(Note { at: now, level: NoteLevel::Info, text: format!("本議題最多 {max_turns} 次模型發言（成本上限）。") });
+        rec.notes.push(Note { at: now, level: NoteLevel::Info, text: format!("本專案最多 {max_turns} 次模型發言（成本上限）。") });
         if let Some(n) = fork_note {
             rec.notes.push(Note { at: now, level: NoteLevel::Info, text: n });
         }

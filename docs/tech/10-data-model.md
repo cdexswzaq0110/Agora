@@ -8,10 +8,10 @@
 
 ```text
 settings.json            設定、配對的裝置、預設模型、不支援的模型、情報設定、排程、自訂範本
-projects.json            專案（含專案記憶）
+projects.json            專案（含程式庫記憶）
 quota.json               每個提供者最後一次的額度快照
 quota_history.jsonl      額度歷史（每行一筆 QuotaSample）
-sessions/<id>.json       完整的議題紀錄
+sessions/<id>.json       完整的專案紀錄
 digests/<YYYY-MM-DD>.json 每日情報
 experiments/<id>.json    模式比較實驗
 workflows/<id>.json      專案團隊工作流（v0.5；id 只允許 w-＋十六進位）
@@ -22,7 +22,7 @@ sandbox/                 預設專案的工作目錄
 
 寫入一律是原子的：先寫 `.tmp` 再 rename。id 只允許英數和 `-`；日期必須是 `YYYY-MM-DD`。
 
-## SessionSpec（建立議題）
+## SessionSpec（建立專案）
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
@@ -41,7 +41,7 @@ sandbox/                 預設專案的工作目錄
 | `seed` | `{session_id, upto}`? | 分岔 |
 | `group_id` / `template` | string? | 比較實驗、範本來源 |
 
-## SessionRecord（議題紀錄）
+## SessionRecord（專案紀錄）
 
 `id`、`spec`、`title`、`status`、`phase`、`created_at`、`updated_at`、`turns[]`、`notes[]`、`interjections[]`、`verify_runs[]`、`verdict?`、`plan?`、`workspace?`、`error?`
 
@@ -63,9 +63,21 @@ sandbox/                 預設專案的工作目錄
 | `status` | `active`／`stopped`（可行性分析決定不做）／`done` |
 | `stages[5]` | `kind, status, session_id, started_on, artifact, revision, based_on, role_checks, approved_at, applied` |
 | `tasks[]` | `id`（`r<版本>-<序號>`）、`title`、`body`、`session_id` |
-| `sessions[]`、`cap_extra` | 所有階段議題（呼叫上限計算用）；你確認過的上限提高量 |
+| `sessions[]`、`cap_extra` | 所有階段專案（呼叫上限計算用）；你確認過的上限提高量 |
 
-議題多了兩個欄位：`SessionSpec.stage`（團隊階段的呼叫與角色，只由工作流引擎設定）、`Turn.team_roles`（這次呼叫被指派的角色）。兩者都是 `serde(default)`，舊檔案照常讀取。
+專案多了兩個欄位：`SessionSpec.stage`（團隊階段的呼叫與角色，只由工作流引擎設定）、`Turn.team_roles`（這次呼叫被指派的角色）。兩者都是 `serde(default)`，舊檔案照常讀取。
+
+## 審查與 skill（v0.6）
+
+| 欄位 | 說明 |
+|---|---|
+| `Plan.contract` | `{sha256, criteria: [{id, text, verification}], source, notes}`：核准時由程式切出並封存 |
+| `SessionRecord.reviews[]` | 每次審查：`round, stage (spec/quality), attempt, turn, contract_sha256, fp_verify, fp_before, fp_after, outcome (accepted/rejected/version_changed/failed), problems, verdicts, findings, same_family, at` |
+| `Turn.skills[]` | 程式寫的收據：`id, version, sha256, truncated, references_omitted` |
+| `Settings.readonly_proofs` | 每個提供者最後一次唯讀證明 `{ok, at, detail}` |
+| `harness/se/` | Serendipity skill bundle 的固定副本（`manifest.json`＋各 skill），編譯時嵌入 |
+
+全部是 `serde(default)`，舊檔照常讀取。
 
 ## 證據等級（`grade.rs`）
 
@@ -84,7 +96,7 @@ sandbox/                 預設專案的工作目錄
 | `port` / `lan_port` / `lan_enabled` | 4717 / 4718 / false | |
 | `quota_stop_percent` | 97 | 額度保護門檻 |
 | `auto_reroute` | true | 額度不足時改派 |
-| `context_pack` | true | 提案時附上專案快照 |
+| `context_pack` | true | 提案時附上程式庫快照 |
 | `isolate_cli_config` | true | 不載入個人的 MCP 工具、外掛、hooks |
 | `transcript_budget_chars` | 24,000 | 記憶壓縮門檻 |
 | `turn_timeout_secs` / `verify_timeout_secs` | 1200 / 600 | |

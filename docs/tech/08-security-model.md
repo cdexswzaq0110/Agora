@@ -16,7 +16,7 @@
 | 模型輸出裡夾帶惡意 HTML | Markdown 先跳脫再轉換；HTML 回應帶 CSP `script-src 'self'`；連結只允許 http(s) | 程式審閱 |
 | 模型改壞你的專案 | 寫入在 git worktree 進行，套用要你按按鈕（ADR 0004） | `worktree_roundtrip…` |
 | agent 用到你的個人工具（例如電腦操控 MCP） | `isolate_cli_config` 預設開啟 | lessons/0007 |
-| 議題 id 或日期被拿來做路徑穿越 | id 只允許英數和 `-`；日期必須是 `YYYY-MM-DD` | `rejects_path_traversal_ids`、`digest_dates_are_validated` |
+| 專案 id 或日期被拿來做路徑穿越 | id 只允許英數和 `-`；日期必須是 `YYYY-MM-DD` | `rejects_path_traversal_ids`、`digest_dates_are_validated` |
 
 ## 呼叫者分級
 

@@ -95,7 +95,7 @@ function optionsHtml() {
     flags.push(check('optPlanOnly', S.c.planOnly, '只產出方案（不實作）'));
     flags.push(check('optAuto', S.c.autoApprove, '自動核准（不等我）', '不建議：核准關卡是你檢查方案的機會'));
   }
-  if (writes) flags.push(check('optIsolate', S.c.isolate, '在隔離的 git worktree 實作', 'git 專案預設開啟：完成後檢查 diff 再決定是否套用'));
+  if (writes) flags.push(check('optIsolate', S.c.isolate, '在隔離的 git worktree 實作', 'git 程式庫預設開啟：完成後檢查 diff 再決定是否套用'));
   if (mode !== 'solo') flags.push(check('optBlind', S.c.blind, '盲審（隱藏作者是哪個模型）'));
   if (flags.length) parts.push(`<div class="field flags">${flags.join('')}</div>`);
   return parts.join('');
@@ -218,7 +218,7 @@ export async function loadSessions() {
     const list = await api(`/api/sessions?project=${encodeURIComponent(project)}${q ? `&q=${encodeURIComponent(q)}` : ''}`);
     if (stale()) return;
     $('#sessCount').textContent = list.length ? `${list.length} 個${q ? '符合' : ''}` : '';
-    box.innerHTML = list.length ? list.map(sessionCard).join('') : `<div class="empty-state wide">${q ? '沒有符合的議題。換個關鍵字試試。' : '這個專案還沒有議題。寫下第一個問題，按「開始」。'}</div>`;
+    box.innerHTML = list.length ? list.map(sessionCard).join('') : `<div class="empty-state wide">${q ? '沒有符合的專案。換個關鍵字試試。' : '這個程式庫還沒有專案。寫下第一個問題，按「開始」。'}</div>`;
   } catch (e) {
     if (stale()) return;
     box.innerHTML = `<div class="empty-state wide">讀取失敗：${esc(e.message)}</div>`;
@@ -249,9 +249,9 @@ export async function renderHome() {
 
   <div id="attention">${attentionHtml()}</div>
 
-  <section class="composer" aria-label="開新議題">
+  <section class="composer" aria-label="開新專案">
     <div class="composer-top">
-      <label class="field inline"><span>專案</span><select id="projSel">${projects.map((p) => `<option value="${esc(p.id)}"${p.id === S.projectId ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}<option value="__new">＋ 新增專案…</option></select></label>
+      <label class="field inline"><span>程式庫</span><select id="projSel">${projects.map((p) => `<option value="${esc(p.id)}"${p.id === S.projectId ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}<option value="__new">＋ 新增程式庫…</option></select></label>
       <label class="field inline"><span>從範本開始</span><select id="tplSel"><option value="">（不使用範本）</option>${S.templates.map((t) => `<option value="${esc(t.id)}"${t.id === S.c.template ? ' selected' : ''}>${esc(t.name)}${t.builtin ? '' : '（自訂）'}</option>`).join('')}</select></label>
       <span class="path" title="${esc(proj?.path || '')}">${esc(proj?.path || '')}</span>
     </div>
@@ -266,7 +266,7 @@ export async function renderHome() {
     <p class="mode-desc" id="modeDesc">${esc(MODES[S.c.mode].desc)}</p>
 
     ${seed ? `<div class="banner seed"><b>分岔</b><span>會延續「${esc(seed.title)}」第 1–${seed.upto + 1} 則發言，再接著進行。</span><button class="btn small quiet" type="button" id="dropSeed">取消分岔</button></div>` : ''}
-    <label class="field"><span class="sr">議題內容</span><textarea id="prompt" class="prompt" placeholder="要做什麼、討論什麼、辯論什麼？例：幫這個專案加上匯出 CSV 功能；或：這個服務該用 SQLite 還是 Postgres？">${esc(S.c.prompt)}</textarea></label>
+    <label class="field"><span class="sr">專案內容</span><textarea id="prompt" class="prompt" placeholder="要做什麼、討論什麼、辯論什麼？例：幫這個程式庫加上匯出 CSV 功能；或：這個服務該用 SQLite 還是 Postgres？">${esc(S.c.prompt)}</textarea></label>
 
     <div class="flow-row">
       <div class="flow-summary" id="flowSummary" aria-live="polite"></div>
@@ -279,8 +279,8 @@ export async function renderHome() {
       <h3 class="sub">選項</h3>
       <div class="options" id="opts">${optionsHtml()}</div>
       ${compareHtml()}
-      ${proj ? `<details class="brief memory-box"><summary>專案記憶（${proj.memory.trim() ? proj.memory.trim().split('\n').length + ' 行' : '空白'}）— 每次發言都會帶入；超過 3000 字時依議題檢索最相關的部分</summary>
-        <textarea id="memoryText" placeholder="決策、慣例、教訓……議題結束後可以按「存入專案記憶」自動加一行">${esc(proj.memory)}</textarea>
+      ${proj ? `<details class="brief memory-box"><summary>程式庫記憶（${proj.memory.trim() ? proj.memory.trim().split('\n').length + ' 行' : '空白'}）— 每次發言都會帶入；超過 3000 字時依專案檢索最相關的部分</summary>
+        <textarea id="memoryText" placeholder="決策、慣例、教訓……專案結束後可以按「存入程式庫記憶」自動加一行">${esc(proj.memory)}</textarea>
         <div class="toolbar" style="margin-top:.6rem"><button class="btn small" type="button" id="saveMemory">儲存記憶</button></div></details>` : ''}
     </div>
 
@@ -294,8 +294,8 @@ export async function renderHome() {
   </section>
 
   <section class="block" id="archive">
-    <div class="block-head"><span class="index">Archive</span><h2>議題紀錄</h2><span class="aside"><span id="sessState" class="updating" aria-live="polite"></span> <span id="sessCount"></span></span></div>
-    <input type="search" id="sessSearch" class="search" placeholder="搜尋議題標題、內容或任何發言…" aria-label="搜尋議題">
+    <div class="block-head"><span class="index">Archive</span><h2>專案紀錄</h2><span class="aside"><span id="sessState" class="updating" aria-live="polite"></span> <span id="sessCount"></span></span></div>
+    <input type="search" id="sessSearch" class="search" placeholder="搜尋專案標題、內容或任何發言…" aria-label="搜尋專案">
     <div class="session-grid" id="sessions"></div>
   </section>`;
   paintSummary();
@@ -323,7 +323,7 @@ function applyTemplate(t) {
   const prompt = $('#prompt');
   const current = prompt.value.trim();
   const previousScaffold = (S.templates.find((x) => x.id === S.c.template)?.scaffold || '').trim();
-  if (current && current !== previousScaffold && !confirm('套用範本會取代目前的議題內容，確定嗎？')) {
+  if (current && current !== previousScaffold && !confirm('套用範本會取代目前的專案內容，確定嗎？')) {
     $('#tplSel').value = S.c.template || '';
     return;
   }
@@ -377,7 +377,7 @@ function bindHome() {
       const p = await api('/api/projects', { method: 'POST', body: { name: f.name.value, path: f.path.value } });
       S.projects = await api('/api/projects');
       S.projectId = p.id; store.set('project', p.id);
-      toast(`已建立專案「${p.name}」`);
+      toast(`已建立程式庫「${p.name}」`);
       renderHome();
     } catch (err) { toast(err.message, true); }
   });
@@ -386,7 +386,7 @@ function bindHome() {
     try {
       const p = await api(`/api/projects/${encodeURIComponent(S.projectId)}`, { method: 'PATCH', body: { memory: $('#memoryText').value } });
       S.projects = S.projects.map((x) => (x.id === p.id ? p : x));
-      toast('專案記憶已儲存');
+      toast('程式庫記憶已儲存');
     } catch (err) { toast(err.message, true); }
   });
   const modes = $('#modes');
@@ -518,10 +518,10 @@ async function startSession() {
   if (starting) return;
   const btn = $('#startBtn');
   const spec = buildSpec();
-  if (!spec.prompt) { toast('請先輸入議題內容', true); $('#prompt')?.focus(); return; }
+  if (!spec.prompt) { toast('請先輸入專案內容', true); $('#prompt')?.focus(); return; }
   const compare = S.c.compare || [];
   if (compare.length === 1) { toast('同題比較至少要勾選 2 種模式（或全部取消）', true); return; }
-  if (compare.length < 2 && spec.access === 'write' && !spec.isolate && !confirm('這個議題會直接修改專案資料夾裡的檔案（沒有隔離）。確定要開始嗎？')) return;
+  if (compare.length < 2 && spec.access === 'write' && !spec.isolate && !confirm('這個專案會直接修改程式庫資料夾裡的檔案（沒有隔離）。確定要開始嗎？')) return;
   starting = true;
   btn.disabled = true;
   try {

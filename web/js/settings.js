@@ -15,7 +15,7 @@ const view = () => $('#view');
 const SOURCES = [['hn', 'Hacker News'], ['github', 'GitHub Trending'], ['lobsters', 'Lobsters'], ['reddit', 'Reddit'], ['devto', 'dev.to'], ['hf', 'Hugging Face Papers']];
 const WEEK = [[1, '一'], [2, '二'], [3, '三'], [4, '四'], [5, '五'], [6, '六'], [7, '日']];
 const SECTIONS = [
-  ['sec-phone', '手機連線'], ['sec-digest', '每日技術情報'], ['sec-schedules', '排程議題'], ['sec-models', '預設模型與推理強度'],
+  ['sec-phone', '手機連線'], ['sec-digest', '每日技術情報'], ['sec-schedules', '排程專案'], ['sec-models', '預設模型與推理強度'],
   ['sec-guards', '保護機制'], ['sec-templates', '自訂範本'], ['sec-cli', 'CLI 路徑'], ['sec-mcp', 'MCP'], ['sec-misc', '其他'],
 ];
 const IMMEDIATE = '<span class="chip now">立即生效</span>';
@@ -48,8 +48,8 @@ function pairingRemaining(expiresAt) {
 export function notifyButton() {
   if (!('Notification' in window)) return '<span class="muted">這個瀏覽器不支援通知</span>';
   if (!window.isSecureContext) return '<span class="muted" style="font-size:.85rem">通知需要 HTTPS（建議用 tailscale serve）</span>';
-  if (Notification.permission === 'granted') return '<span class="status-pill"><span class="dot ok"></span>議題完成時會通知</span>';
-  return '<button class="btn small" type="button" id="notifyBtn">議題完成時通知我</button>';
+  if (Notification.permission === 'granted') return '<span class="status-pill"><span class="dot ok"></span>專案完成時會通知</span>';
+  return '<button class="btn small" type="button" id="notifyBtn">專案完成時通知我</button>';
 }
 function bindNotify(rerender) {
   const b = $('#notifyBtn');
@@ -64,6 +64,7 @@ export async function renderSettings() {
       <p class="lede">已配對為「${esc(S.whoami.device || '手機')}」。模型路徑、保護門檻、排程與配對管理只能在電腦上修改。</p>
       <p class="muted">想把 Agora 放到主畫面：iPhone 用 Safari 的分享按鈕 →「加入主畫面」；Android 用 Chrome 選單 →「安裝應用程式」。</p>
       <div class="toolbar">${notifyButton()}</div>
+      <p><a href="#/skills">查看方法（skills）→</a></p>
       <label class="check"><input type="checkbox" id="setShortcuts"${shortcutsEnabled() ? ' checked' : ''}> 啟用單鍵快捷鍵（? 與 g 系列；只存在這台裝置）</label></section>`;
     bindNotify(renderSettings);
     $('#setShortcuts').onchange = (e) => setShortcutsEnabled(e.target.checked);
@@ -263,6 +264,14 @@ function effortSelect(attrs, list, selected, firstLabel) {
   return `<select ${attrs}${list.length ? '' : ' disabled'}><option value="">${esc(firstLabel)}</option>${list.map((e) => `<option value="${esc(e)}"${e === selected ? ' selected' : ''}>${esc(e)}（${esc(EFFORT_ZH[e] || e)}）</option>`).join('')}</select>`;
 }
 
+function readonlyProofHtml(p) {
+  const proof = p.readonly_proof;
+  const status = p.readonly_proven
+    ? `已證明${proof?.at ? `（${esc(stamp(proof.at))}）` : ''}`
+    : proof && !proof.ok ? `失敗（${esc(proof.detail || '沒有詳細資訊')}）` : '未證明';
+  return `<div class="readonly-proof"><p><b>唯讀證明：</b>${status}</p><small>沒有證明的提供者，審查結論最高只到「推論」。</small>${S.whoami.local ? `<button class="btn small quiet" type="button" data-prove-readonly="${esc(p.id)}">證明唯讀</button><small>會花一次很小的 CLI 呼叫。</small>` : ''}</div>`;
+}
+
 /** Efforts every real provider's CLI-default entry lists (the digest may use any of them). */
 function commonDigestEfforts(d) {
   if (d.provider) return effortsFor(d.provider, d.model || '').list;
@@ -304,29 +313,30 @@ function paint(s, pr, schedules, health) {
   </section>
 
   <section class="block" id="sec-schedules">
-    <div class="block-head"><span class="index">03 / Schedules</span><h2>排程議題</h2><span class="aside">${IMMEDIATE} 排程一律唯讀，工作坊只產出方案</span></div>
+    <div class="block-head"><span class="index">03 / Schedules</span><h2>排程專案</h2><span class="aside">${IMMEDIATE} 排程一律唯讀，工作坊只產出方案</span></div>
     <div id="scheduleList">${schedules.length ? schedules.map(scheduleRow).join('') : '<p class="muted">還沒有排程。</p>'}</div>
     <form id="scheduleForm" class="options">
       <label class="field"><span>名稱</span><input type="text" name="name" required placeholder="每晚審查今天的變更"></label>
       <label class="field"><span>模式</span><select name="mode">${MODE_ORDER.map((m) => `<option value="${m}">${esc(MODES[m].zh)}</option>`).join('')}</select></label>
       <label class="field"><span>時間</span><input type="time" name="time" value="22:00" required></label>
       <div class="field"><span class="field-label">星期（不勾＝每天）</span><div class="flags">${WEEK.map(([n, l]) => `<label class="check"><input type="checkbox" name="wd" value="${n}"> ${l}</label>`).join('')}</div></div>
-      <label class="field wide-field"><span>議題</span><textarea name="prompt" required placeholder="請審查今天 git log 裡的變更，找出風險與遺漏的測試。" style="min-height:5rem"></textarea></label>
+      <label class="field wide-field"><span>專案內容</span><textarea name="prompt" required placeholder="請審查今天 git log 裡的變更，找出風險與遺漏的測試。" style="min-height:5rem"></textarea></label>
       <div class="field" style="align-self:end"><button class="btn primary" type="submit">新增排程</button></div>
     </form>
   </section>
 
   <section class="block" id="sec-models">
-    <div class="block-head"><span class="index">04 / Models</span><h2>預設模型與推理強度</h2><span class="aside">議題裡沒有指定時使用；推理越高，token 越多</span></div>
+    <div class="block-head"><span class="index">04 / Models</span><h2>預設模型與推理強度</h2><span class="aside">專案裡沒有指定時使用；推理越高，token 越多</span></div>
     <div class="settings-grid">
       ${real.map((p) => {
         const model = s.default_models[p.id] || '';
         const { list } = effortsFor(p.id, model);
         return `<div class="stack"><label class="field"><span>${esc(p.name)}</span><select data-default="${esc(p.id)}" data-k="model.${esc(p.id)}">${modelOptions(p.id, model)}</select></label>
-          <label class="field"><span>預設推理強度</span>${effortSelect(`data-effort-default="${esc(p.id)}" data-k="effort.${esc(p.id)}"`, list, (s.default_efforts || {})[p.id] || '', list.length ? '模型預設（由 CLI 決定）' : '這個 CLI 無法調整')}</label></div>`;
+          <label class="field"><span>預設推理強度</span>${effortSelect(`data-effort-default="${esc(p.id)}" data-k="effort.${esc(p.id)}"`, list, (s.default_efforts || {})[p.id] || '', list.length ? '模型預設（由 CLI 決定）' : '這個 CLI 無法調整')}</label>${readonlyProofHtml(p)}</div>`;
       }).join('')}
       <div class="field" style="align-self:end"><button class="btn small quiet" type="button" id="clearBad">清除「方案不支援」標記</button></div>
     </div>
+    <p><a href="#/skills">查看方法（skills）→</a></p>
   </section>
 
   <section class="block" id="sec-guards">
@@ -335,7 +345,7 @@ function paint(s, pr, schedules, health) {
       <label class="field"><span>額度保護門檻（%）</span><input type="number" min="50" max="100" step="1" id="setQuota" data-k="quota" value="${esc(s.quota_stop_percent)}"><small>任一時段用到這個比例就不再呼叫該模型</small></label>
       <div class="stack">
         <label class="check"><input type="checkbox" id="setReroute" data-k="reroute"${s.auto_reroute ? ' checked' : ''}> 額度不足時自動改派給另一個就緒的模型</label>
-        <label class="check"><input type="checkbox" id="setPack" data-k="pack"${s.context_pack ? ' checked' : ''}> 提案與討論時附上專案快照（檔案樹、README、最近 commit）</label>
+        <label class="check"><input type="checkbox" id="setPack" data-k="pack"${s.context_pack ? ' checked' : ''}> 提案與討論時附上程式庫快照（檔案樹、README、最近 commit）</label>
         <label class="check" title="開啟時，Agora 驅動的 Claude／Codex 不會載入你個人的 MCP 工具（例如電腦操控）、外掛與 hooks；Codex 的 Windows 寫入沙盒設定仍會帶入"><input type="checkbox" id="setClean" data-k="clean"${s.isolate_cli_config ? ' checked' : ''}> 隔離 CLI 的個人設定（不載入你的 MCP 工具、外掛、hooks）</label>
       </div>
       <label class="field"><span>單則發言逾時（秒）</span><input type="number" min="60" step="60" id="setTimeout" data-k="timeout" value="${esc(s.turn_timeout_secs)}"></label>
@@ -358,7 +368,7 @@ function paint(s, pr, schedules, health) {
 
   <section class="block" id="sec-mcp">
     <div class="block-head"><span class="index">08 / MCP</span><h2>在 Claude Code／Codex 裡使用 Agora</h2></div>
-    <p class="muted" style="margin-top:0">註冊之後，可以在 CLI 對話裡請它「用 agora_discuss 問另一個模型」或「讀 agora_digest」。透過 MCP 的議題一律唯讀。</p>
+    <p class="muted" style="margin-top:0">註冊之後，可以在 CLI 對話裡請它「用 agora_discuss 問另一個模型」或「讀 agora_digest」。透過 MCP 的專案一律唯讀。</p>
     ${mcp ? `<dl class="kv"><dt>Claude Code</dt><dd><span class="copyable" data-copy='claude mcp add agora -- "${esc(mcp)}"'>claude mcp add agora -- "${esc(mcp)}"</span></dd>
       <dt>Codex</dt><dd>在 <code>~/.codex/config.toml</code> 加上：<pre class="copyable" data-copy='[mcp_servers.agora]\\ncommand = "${esc(mcp.replace(/\\/g, '\\\\'))}"'>[mcp_servers.agora]\ncommand = "${esc(mcp.replace(/\\/g, '\\\\'))}"</pre></dd></dl>`
       : '<p class="muted">找不到 agora-mcp.exe（請用 <code>cargo build -p agora-server --release</code> 編譯，它會和 agora-server.exe 放在同一個資料夾）。</p>'}
@@ -438,6 +448,17 @@ function bind(s) {
   body.addEventListener('input', (e) => { if (e.target.closest('[data-k]')) captureDraft(); });
   body.addEventListener('change', (e) => { if (e.target.closest('[data-k]')) captureDraft(); });
   body.addEventListener('click', async (e) => {
+    const prove = e.target.closest('[data-prove-readonly]');
+    if (prove) {
+      prove.disabled = true;
+      try {
+        const result = await api('/api/skills/prove-readonly', { method: 'POST', body: { provider: prove.dataset.proveReadonly } });
+        await loadProviders();
+        toast(result.ok ? '唯讀證明完成' : `唯讀證明失敗：${result.detail || '沒有詳細資訊'}`, !result.ok);
+        renderSettings();
+      } catch (err) { prove.disabled = false; toast(err.message, true); }
+      return;
+    }
     const cp = e.target.closest('[data-copy]');
     if (cp) { toast((await copyText(cp.dataset.copy.replace(/\\n/g, '\n'))) ? '已複製' : '無法複製'); return; }
     const rv = e.target.closest('[data-revoke]');

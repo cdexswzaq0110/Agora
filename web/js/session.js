@@ -7,6 +7,7 @@ import { S, MODES, ROLE_ZH, STATUS_ZH, FAMILY, WORKSHOP_STEPS, saveComposer, chi
 import { voiceButton, bindVoice } from './voice.js';
 import { announce } from './attention.js';
 import { loadTeamInfo } from './team.js';
+import { reviewHtml, skillTagsHtml } from './review.js';
 
 const view = () => $('#view');
 const live = (r) => r && (r.status === 'running' || r.status === 'awaiting_approval');
@@ -38,15 +39,16 @@ export async function renderSession(id) {
   S.memLine = null;
   S.discoveryAnswers = {};
   S.stageWorkflowTitle = null;
-  view().innerHTML = `<div id="sHead" class="session-head"><a class="back" href="#/sessions">← 議題</a><h1 id="sTitle" tabindex="-1">載入中…</h1></div>
+  view().innerHTML = `<div id="sHead" class="session-head"><a class="back" href="#/sessions">← 專案</a><h1 id="sTitle" tabindex="-1">載入中…</h1></div>
     <div id="sSticky" class="session-sticky" hidden aria-hidden="true"></div>
     <div id="sStepper"></div>
     <div id="sGate"></div>
     <div id="sVerdict"></div>
+    <div id="sReview"></div>
     <div id="sWorkspace"></div>
     <div id="sPlanBox"></div>
     <div class="session-body">
-      <aside class="rail" id="sRail" aria-label="議題概況"></aside>
+      <aside class="rail" id="sRail" aria-label="專案概況"></aside>
       <div class="timeline-wrap">
         <div class="timeline-tools" id="sTools"></div>
         <div class="timeline" id="sTimeline"></div>
@@ -86,7 +88,7 @@ function openStream(id) {
     if (S.es !== es) return;
     if (S.rec && !live(S.rec)) { closeStream(); return; }
     try { const r = await api(`/api/sessions/${encodeURIComponent(id)}`); if (S.route.includes(id)) { S.rec = r; paintSession(); } }
-    catch (e) { if (!S.rec) $('#sHead').innerHTML = `<a class="back" href="#/sessions">← 議題</a><p class="lede">${esc(e.message)}</p>`; closeStream(); }
+    catch (e) { if (!S.rec) $('#sHead').innerHTML = `<a class="back" href="#/sessions">← 專案</a><p class="lede">${esc(e.message)}</p>`; closeStream(); }
   };
 }
 
@@ -177,7 +179,7 @@ export function applyEvent(ev, id) {
     case 'status':
       r.status = ev.status; r.error = ev.error; r.updated_at = Date.now();
       if (!live(r)) r.phase = null;
-      announce(ev.status === 'awaiting_approval' ? `方案已整理好，等你核准：${r.title}` : `議題${STATUS_ZH[ev.status] || ev.status}：${r.title}`, `${r.id}:${ev.status}`);
+      announce(ev.status === 'awaiting_approval' ? `方案已整理好，等你核准：${r.title}` : `專案${STATUS_ZH[ev.status] || ev.status}：${r.title}`, `${r.id}:${ev.status}`);
       schedulePaint();
       if (!live(r)) setTimeout(closeStream, 300);
       break;
@@ -213,13 +215,13 @@ function turnHtml(t) {
     u ? `輸入 ${num(u.input_tokens)}${u.cached_input_tokens ? `（快取 ${num(u.cached_input_tokens)}）` : ''} · 輸出 ${num(u.output_tokens)} tokens` : '',
     t.context_compacted ? '上下文已記憶壓縮' : '',
     t.rerouted_from ? `額度保護：由 ${t.rerouted_from} 改派` : '',
-    t.seeded ? '承接自上一個議題' : '',
+    t.seeded ? '承接自上一個專案' : '',
   ].filter(Boolean);
   const wide = ['synthesizer', 'builder', 'reviewer', 'solo'].includes(t.role) || (t.role === 'judge' && S.rec.turns.filter((x) => x.role === 'judge').length === 1);
   const canFork = !running && t.ok && !live(S.rec);
   return `<article class="turn fam-${t.family}${collapsed ? ' collapsed' : ''}${wide ? ' wide' : ''}${t.seeded ? ' seeded' : ''}" id="turn-${t.index}">
-    <header><span class="who">${esc(FAMILY[t.family] || t.family)}</span><span class="role">${esc(ROLE_ZH[t.role] || t.role)}</span>${t.team_roles?.length ? `<span class="team-turn-roles">${t.team_roles.map((id) => S.teamInfo?.roles.find((r) => r.id === id)?.name || id).map(esc).join(' · ')}</span>` : ''}${t.model ? `<span class="model">${esc(t.model)}</span>` : ''}${t.effort ? `<span class="model" title="推理強度">推理 ${esc(t.effort)}</span>` : ''}<span class="state">${state}</span>
-      ${canFork ? `<button class="fork" type="button" data-fork="${t.index}" title="從這則之後分岔出新議題">分岔 ↗</button>` : ''}</header>
+    <header><span class="who">${esc(FAMILY[t.family] || t.family)}</span><span class="role">${esc(ROLE_ZH[t.role] || t.role)}</span>${t.team_roles?.length ? `<span class="team-turn-roles">${t.team_roles.map((id) => S.teamInfo?.roles.find((r) => r.id === id)?.name || id).map(esc).join(' · ')}</span>` : ''}${t.model ? `<span class="model">${esc(t.model)}</span>` : ''}${t.effort ? `<span class="model" title="推理強度">推理 ${esc(t.effort)}</span>` : ''}${skillTagsHtml(t.skills)}<span class="state">${state}</span>
+      ${canFork ? `<button class="fork" type="button" data-fork="${t.index}" title="從這則之後分岔出新專案">分岔 ↗</button>` : ''}</header>
     ${tools}
     <div class="body md${running ? ' cursor' : ''}">${t.text ? md(t.text) : running ? '<p class="muted">等待模型回應…</p>' : ''}</div>
     ${t.error ? `<div class="err">${esc(t.error)}</div>` : ''}
@@ -374,7 +376,7 @@ function gateHtml(r) {
       </div>
       <aside class="plan-actions" id="planActions" aria-label="核准決定">
         ${discoveryQuestionsHtml(r)}
-        ${r.spec.plan_only ? '<p class="hint">這個議題只產出方案；核准後就結束，不會實作。</p>' : `<label class="field"><span>驗證指令</span><input type="text" id="planVerify" value="${esc(S.gateUi.verify ?? verify)}" placeholder="${esc(suggested ? `方案建議：${suggested}` : '例如 cargo test')}"><small>強烈建議：有它才可能得到「已確認」</small></label>`}
+        ${r.spec.plan_only ? '<p class="hint">這個專案只產出方案；核准後就結束，不會實作。</p>' : `<label class="field"><span>驗證指令</span><input type="text" id="planVerify" value="${esc(S.gateUi.verify ?? verify)}" placeholder="${esc(suggested ? `方案建議：${suggested}` : '例如 cargo test')}"><small>強烈建議：有它才可能得到「已確認」</small></label>`}
         <button class="btn primary block" type="button" id="approveBtn" data-magnetic>${r.spec.plan_only ? '核准方案' : '核准並開始實作 ↗'}</button>
         ${commentsHtml(p)}
         <button class="btn block" type="button" id="reviseToggle" aria-expanded="${S.gateUi.reviseOpen}" aria-controls="reviseBox"${p.revision >= 2 ? ' disabled title="已達修訂上限（2 次）"' : ''}>要求修訂${p.revision >= 2 ? '（已達上限）' : S.gateUi.comments.length ? `（含 ${S.gateUi.comments.length} 則留言）` : ''}</button>
@@ -415,16 +417,16 @@ function workspaceHtml(r) {
   const ws = r.workspace;
   if (!ws) return '';
   const wt = ws.kind === 'worktree';
-  const stateZh = { active: wt ? '隔離中' : '已直接修改', applied: '已套用到專案', discarded: '已丟棄' }[ws.state];
+  const stateZh = { active: wt ? '隔離中' : '已直接修改', applied: '已套用到程式庫', discarded: '已丟棄' }[ws.state];
   const canAct = wt && ws.state === 'active' && !live(r);
   const d = S.diff;
   return `<section class="workspace" aria-label="工作區">
-    <div class="top"><span class="eyebrow">Workspace · ${wt ? '隔離工作區' : '專案資料夾'}</span><span class="chip">${esc(stateZh)}</span>${ws.branch ? `<code class="muted">${esc(ws.branch)}</code>` : ''}</div>
-    <p class="muted" style="margin:0">${wt ? `模型在 <code>${esc(ws.path)}</code> 工作，你的專案資料夾在套用前不會被改動。` : '這個議題直接修改專案資料夾（不是 git repo 或已關閉隔離）。'}${ws.message ? ' ' + esc(ws.message) : ''}</p>
+    <div class="top"><span class="eyebrow">Workspace · ${wt ? '隔離工作區' : '程式庫資料夾'}</span><span class="chip">${esc(stateZh)}</span>${ws.branch ? `<code class="muted">${esc(ws.branch)}</code>` : ''}</div>
+    <p class="muted" style="margin:0">${wt ? `模型在 <code>${esc(ws.path)}</code> 工作，你的程式庫資料夾在套用前不會被改動。` : '這個專案直接修改程式庫資料夾（不是 git repo 或已關閉隔離）。'}${ws.message ? ' ' + esc(ws.message) : ''}</p>
     <div class="toolbar">
       ${ws.state === 'active' ? `<button class="btn small" type="button" id="diffBtn"${S.diffLoading ? ' disabled aria-busy="true"' : ''}>${S.diffLoading ? '載入 diff 中…' : d ? '重新整理 diff' : '查看 diff'}</button>` : ''}
-      ${canAct ? '<button class="btn small primary" type="button" id="applyBtn">套用到專案（不 commit）</button><button class="btn small danger" type="button" id="discardBtn">丟棄</button>' : ''}
-      ${wt && ws.state === 'active' && live(r) ? '<span class="muted">議題結束後才能套用或丟棄</span>' : ''}
+      ${canAct ? '<button class="btn small primary" type="button" id="applyBtn">套用到程式庫（不 commit）</button><button class="btn small danger" type="button" id="discardBtn">丟棄</button>' : ''}
+      ${wt && ws.state === 'active' && live(r) ? '<span class="muted">專案結束後才能套用或丟棄</span>' : ''}
     </div>
     ${d ? diffHtml(d) : ''}
   </section>`;
@@ -452,8 +454,8 @@ function memoryHtml(r) {
   if (!v || live(r)) return '';
   const line = S.memLine ?? memoryDefault(r);
   return `<div class="memory-suggest">
-      <label class="field"><span>存入專案記憶${v.memory_hint ? '（模型建議，可修改）' : ''}</span><input type="text" id="memLine" maxlength="300" value="${esc(line)}"></label>
-      <button class="btn small" type="button" id="rememberBtn">存入專案記憶</button>
+      <label class="field"><span>存入程式庫記憶${v.memory_hint ? '（模型建議，可修改）' : ''}</span><input type="text" id="memLine" maxlength="300" value="${esc(line)}"></label>
+      <button class="btn small" type="button" id="rememberBtn">存入程式庫記憶</button>
       <p class="muted mem-preview" id="memPreview">會寫入：- [${esc(stamp(r.created_at).slice(0, 10))}] ${esc(line)}【${esc(GRADE[v.grade].zh)}】</p>
     </div>`;
 }
@@ -465,6 +467,8 @@ function verdictHtml(v, r) {
       <h2>${esc(v.headline)}</h2>
       ${v.summary ? `<div class="md">${md(v.summary)}</div>` : ''}
       ${v.open_issues.length ? `<div><p class="eyebrow" style="margin-bottom:.4rem">${{ synthesized: '待驗證事項', judged: '待驗證事項', split: '待驗證事項', planned: '驗收標準' }[v.outcome] || '未解決的問題'}</p><ul>${v.open_issues.map((x) => `<li>${inline(x)}</li>`).join('')}</ul></div>` : ''}
+      ${v.outcome === 'acceptance_unverified' ? '<p class="review-next"><b>驗收尚未確認。</b>請查看驗收合約中標示「無法確認」的條件，自行判斷，或補充可執行的驗證方式。</p>' : ''}
+      ${v.outcome === 'review_unusable' ? '<p class="review-next"><b>審查結果無法採用。</b>請查看審查紀錄的失敗原因；修正審查環境或確認版本後再重試。</p>' : ''}
       <p class="explain">「${GRADE[v.grade].zh}」：${esc(GRADE[v.grade].tip)}。${v.grade === 'confirmed' ? '' : '要升到「已確認」，需要實際執行驗證指令並通過。'}</p>
       ${r ? memoryHtml(r) : ''}
     </section>`;
@@ -534,7 +538,7 @@ function headHtml(r, isLive) {
   const status = r.status === 'running' && r.phase ? r.phase : STATUS_ZH[r.status];
   const stage = r.spec.stage;
   const stageName = stage ? S.teamInfo?.stages.find((s) => s.kind === stage.kind)?.label || stage.kind : '';
-  return `<a class="back" href="#/sessions">← 議題</a>
+  return `<a class="back" href="#/sessions">← 專案</a>
     ${stage ? `<nav class="team-breadcrumb" aria-label="麵包屑"><a href="#/team">專案團隊</a><span>›</span><a href="#/w/${esc(stage.workflow_id)}">${esc(S.stageWorkflowTitle || stage.workflow_id)}</a><span>›</span><span aria-current="page">${esc(stageName)}</span></nav>` : ''}
     <p class="eyebrow">${m.en} · ${m.zh}${proj ? ' · ' + esc(proj.name) : ''} · ${esc(stamp(r.created_at))}${r.spec.blind ? ' · 盲審' : ''}${r.spec.group_id ? ` · <a href="#/x/${esc(r.spec.group_id)}">同題比較 ↗</a>` : ''}</p>
     <h1 id="sTitle" tabindex="-1">${esc(r.title)}</h1>
@@ -549,8 +553,8 @@ function headHtml(r, isLive) {
         <button type="button" id="reuseBtn">以此為範本</button>
       </div></details>
     </div>
-    ${r.error ? `<div class="banner bad"><b>議題中止</b><span>${esc(r.error)}</span></div>` : ''}
-    <details class="brief"><summary>議題內容${r.spec.verify_command ? ' · 驗證指令 ' + esc(r.spec.verify_command) : ''}${r.spec.access === 'write' ? ' · 可修改檔案' : ''}</summary><pre>${esc(r.spec.prompt)}</pre></details>`;
+    ${r.error ? `<div class="banner bad"><b>專案中止</b><span>${esc(r.error)}</span></div>` : ''}
+    <details class="brief"><summary>專案內容${r.spec.verify_command ? ' · 驗證指令 ' + esc(r.spec.verify_command) : ''}${r.spec.access === 'write' ? ' · 可修改檔案' : ''}</summary><pre>${esc(r.spec.prompt)}</pre></details>`;
 }
 
 function stickyHtml(r, isLive) {
@@ -596,6 +600,7 @@ export function paintSession() {
   if (!(r.status === 'awaiting_approval' && gate._html && gate.contains(document.activeElement))) swap(gate, gateHtml(r));
   decorateComments(r);
   swap($('#sVerdict'), verdictHtml(r.verdict, r));
+  swap($('#sReview'), reviewHtml(r));
   swap($('#sWorkspace'), workspaceHtml(r));
   swap($('#sPlanBox'), planBoxHtml(r));
   swap($('#sTools'), r.turns.length > 1 ? `<span class="eyebrow">Discussion · 討論過程</span><span class="spacer"></span><button class="btn small quiet" type="button" data-fold="open">展開所有輪次</button><button class="btn small quiet" type="button" data-fold="close">收合所有輪次</button>` : '');
@@ -681,7 +686,7 @@ function bindSession() {
   const r = S.rec;
   const id = r.id;
   const on = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
-  on('#cancelBtn', async () => { if (!confirm('停止這個議題？進行中的 CLI 會被終止。')) return; try { await api(`/api/sessions/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: {} }); } catch (e) { toast(e.message, true); } });
+  on('#cancelBtn', async () => { if (!confirm('停止這個專案？進行中的 CLI 會被終止。')) return; try { await api(`/api/sessions/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: {} }); } catch (e) { toast(e.message, true); } });
   const mem = $('#memLine');
   if (mem) mem.oninput = () => {
     S.memLine = mem.value;
@@ -694,7 +699,7 @@ function bindSession() {
     try {
       const p = await api(`/api/sessions/${encodeURIComponent(id)}/remember`, { method: 'POST', body: { line } });
       S.projects = S.projects.map((x) => (x.id === p.id ? p : x));
-      toast('已加入專案記憶，之後的議題都會帶入');
+      toast('已加入程式庫記憶，之後的專案都會帶入');
     } catch (e) { toast(e.message, true); }
   });
   on('#copyBtn', async () => {
@@ -716,7 +721,7 @@ function bindSession() {
   $$('[data-export]', view()).forEach((b) => {
     b.onclick = async () => {
       const kind = b.dataset.export;
-      if (!confirm(kind === 'adr' ? '在專案的 docs/adr/ 新增一份 ADR？' : '在專案的 docs/lessons/ 新增一份 lesson 草稿？')) return;
+      if (!confirm(kind === 'adr' ? '在程式庫的 docs/adr/ 新增一份 ADR？' : '在程式庫的 docs/lessons/ 新增一份 lesson 草稿？')) return;
       try { const x = await api(`/api/sessions/${encodeURIComponent(id)}/export`, { method: 'POST', body: { kind } }); toast(`已寫入 ${x.path}`); }
       catch (e) { toast(e.message, true); }
     };
@@ -841,8 +846,8 @@ function bindSession() {
   // Workspace
   on('#diffBtn', loadDiff);
   on('#applyBtn', async () => {
-    if (!confirm('把隔離工作區的變更套用到你的專案資料夾？（不會 commit，你可以先檢查再自己 commit）')) return;
-    try { S.rec = await api(`/api/sessions/${encodeURIComponent(id)}/workspace/apply`, { method: 'POST', body: {} }); S.diff = null; paintSession(); toast('已套用到專案'); }
+    if (!confirm('把隔離工作區的變更套用到你的程式庫資料夾？（不會 commit，你可以先檢查再自己 commit）')) return;
+    try { S.rec = await api(`/api/sessions/${encodeURIComponent(id)}/workspace/apply`, { method: 'POST', body: {} }); S.diff = null; paintSession(); toast('已套用到程式庫'); }
     catch (e) { toast(e.message, true); }
   });
   on('#discardBtn', async () => {
@@ -907,7 +912,7 @@ function bindSession() {
       S.projectId = r.spec.project_id;
       saveComposer();
       location.hash = '#/sessions';
-      toast(`分岔：會延續前 ${upto + 1} 則發言，請調整議題或模式後開始`);
+      toast(`分岔：會延續前 ${upto + 1} 則發言，請調整專案或模式後開始`);
     }
   };
 }

@@ -163,7 +163,7 @@ impl Engine {
         if idea.chars().count() > team::MAX_IDEA_CHARS {
             bail!("構想太長（上限 {} 字）；細節可以在之後的階段補充", team::MAX_IDEA_CHARS);
         }
-        let project = self.project(&req.project_id).ok_or_else(|| anyhow!("找不到專案"))?;
+        let project = self.project(&req.project_id).ok_or_else(|| anyhow!("找不到程式庫"))?;
         let demo = self.settings().demo_mode;
         let pick = |given: Option<String>, family: Family, cli: &str, mock: &str| -> Result<String> {
             let id = given.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| if demo { mock.into() } else { cli.into() });
@@ -300,7 +300,7 @@ impl Engine {
         if !team::valid_workflow_id(&wf.id) {
             bail!("無效的工作流 id");
         }
-        let project = self.project(&wf.project_id).ok_or_else(|| anyhow!("找不到專案"))?;
+        let project = self.project(&wf.project_id).ok_or_else(|| anyhow!("找不到程式庫"))?;
         let dir = PathBuf::from(&project.path).join("docs").join("agora").join(&wf.id);
         let mut written = Vec::new();
         for (i, kind) in StageKind::ALL.iter().enumerate() {

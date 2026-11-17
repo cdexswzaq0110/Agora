@@ -8,7 +8,7 @@
 - **不對頁面開放任何 Tauri IPC**，頁面的權限和一般瀏覽器分頁相同。
 - 關閉主視窗只會縮到系統匣；第一次縮到系統匣時，會發一則通知說明「仍在執行」。
 - 系統匣選單：開啟 Agora、今日技術情報、用量小工具（置頂）、在瀏覽器開啟、結束。
-- 原生通知：議題完成、失敗、取消，方案等待核准，每日情報整理完成。主視窗在前景時不通知。
+- 原生通知：專案完成、失敗、取消，方案等待核准，每日情報整理完成。主視窗在前景時不通知。
 - release 版設定 `windows_subsystem = "windows"`，沒有主控台；每個子行程都有 `CREATE_NO_WINDOW`。
 
 建置：
@@ -43,7 +43,7 @@ agora-server [--port 4717] [--lan] [--demo] [--data <資料夾>]
 | 工具 | 作用 |
 |---|---|
 | `agora_discuss` | 讓 Claude 和 GPT 回答、討論、辯論或產出方案（solo、roundtable、debate、workshop）；**一律唯讀**，工作坊只產出方案；等到結論出來，回傳結論、證據等級、待驗證事項和網址 |
-| `agora_session` | 讀取一個議題的 Markdown |
+| `agora_session` | 讀取一個專案的 Markdown |
 | `agora_digest` | 讀取每日情報（`latest` 或指定日期） |
 | `agora_usage` | 讀取剩餘額度 |
 

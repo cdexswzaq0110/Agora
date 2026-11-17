@@ -57,7 +57,7 @@ impl Drop for BusyGuard<'_> {
 }
 
 /// Used when no local persona is installed (the public build).
-const DEFAULT_PERSONA: &str = "你是 Agora 的助理。使用繁體中文，以「你」稱呼使用者，不使用 emoji。你熟悉 Agora 的專案團隊工作流、議題、方案核准、技術情報與專案。";
+const DEFAULT_PERSONA: &str = "你是 Agora 的助理。使用繁體中文，以「你」稱呼使用者，不使用 emoji。你熟悉 Agora 的專案團隊工作流、專案、方案核准、技術情報與專案。";
 const PERSONA_LIMIT: usize = 2_000;
 
 fn build_prompt(

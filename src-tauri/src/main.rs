@@ -185,7 +185,7 @@ fn main() {
                         .notification()
                         .builder()
                         .title("Agora 仍在系統匣執行")
-                        .body("手機連線與進行中的議題不會中斷。要完全結束請在系統匣選「結束 Agora」。")
+                        .body("手機連線與進行中的專案不會中斷。要完全結束請在系統匣選「結束 Agora」。")
                         .show();
                 }
             }

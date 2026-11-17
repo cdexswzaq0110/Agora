@@ -1,6 +1,6 @@
 # 02 · 引擎與五種協作模式
 
-原始碼：`crates/agora-core/src/engine/`（`mod.rs` 是引擎本體，`runner.rs` 是發言的基本操作，`modes.rs` 是各模式，`ops.rs` 是議題以外的操作）。
+原始碼：`crates/agora-core/src/engine/`（`mod.rs` 是引擎本體，`runner.rs` 是發言的基本操作，`modes.rs` 是各模式，`ops.rs` 是專案以外的操作）。
 
 ## 基本操作（`runner.rs`）
 
@@ -31,7 +31,7 @@
 
 - **方案擷取**：`prompts::extract_plan` 取「## 最終方案」標題之後到文末的內容，去掉 `整體證據等級`、`VERDICT` 這類尾行。
 - **執行者與審查者**：預設由提案者 1 實作，由另一家模型審查（`counterpart`）。
-- **重啟後接續**：`Engine::decide` 發現議題不在記憶體、但存檔狀態是 `awaiting_approval` 時，會建立 `resume = Some(decision)` 的 runner，跳過提案階段，直接進入核准邏輯。
+- **重啟後接續**：`Engine::decide` 發現專案不在記憶體、但存檔狀態是 `awaiting_approval` 時，會建立 `resume = Some(decision)` 的 runner，跳過提案階段，直接進入核准邏輯。
 - **結論**：
   - 審查通過且驗證通過 → `approved`／已確認。
   - 審查通過但沒有驗證指令 → `approved`／推論。
@@ -81,10 +81,10 @@ stateDiagram-v2
     awaiting_approval --> done: 只保留方案
 ```
 
-Agora 重啟時，`running` 的議題會被標成 `failed`（中斷）；`awaiting_approval` 的議題保持原狀，可以之後再核准。
+Agora 重啟時，`running` 的專案會被標成 `failed`（中斷）；`awaiting_approval` 的專案保持原狀，可以之後再核准。
 
 ## 分岔、盲審、插話
 
-- **分岔**：`spec.seed = {session_id, upto}`，把來源議題的第 0 到 `upto` 則發言複製成 `seeded` 發言。新的輪數接在後面（`round_offset`）；這些複製的發言不計入發言上限，也不計入 token 統計。
+- **分岔**：`spec.seed = {session_id, upto}`，把來源專案的第 0 到 `upto` 則發言複製成 `seeded` 發言。新的輪數接在後面（`round_offset`）；這些複製的發言不計入發言上限，也不計入 token 統計。
 - **盲審**：逐字稿的標題改成「成員 A／B」，依照第一次出現的（原始提供者, 實際模型）配發代號。
 - **插話**：存進 `interjections`，從下一則發言起放進提示詞的「使用者插話」區塊，並標記為已送達。

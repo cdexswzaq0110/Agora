@@ -103,6 +103,12 @@ v0.3 的介面改版是先讓 Claude 與 GPT 各自提案、互評、整合，�
 node scripts/check-web.mjs
 ```
 
+## v0.6 審查、Skills 與唯讀證明
+
+- 專案頁由 `js/review.js` 呈現封存的驗收合約、最新採用的規格審查判定、品質發現與可收合審查紀錄；`session.js` 只提供容器與重繪掛勾，並在發言標頭顯示該次注入的 skill。
+- `#/skills` 由 `js/skills.js` 讀取 `/api/skills`，列出 bundle 來源、核心與延伸 skills、hash、注入及審查統計。入口位於命令面板、團隊首頁與設定頁，主導覽仍維持五格。
+- 設定頁的模型區顯示每個提供者的唯讀證明。本機可呼叫 `POST /api/skills/prove-readonly` 進行一次小型 CLI 證明；未證明的審查結論最高只到「推論」。
+
 把 `web/js/*.js` 當 ES module、`web/*.js` 當一般 script 解析；確認每個具名 import 都存在於目標 module 的 export；確認 `sw.js` 快取了每個 module。不要用 `node --check web/js/x.js`：Node 24 上它對 module 裡的語法錯誤也回傳 0（[lessons/0008](../lessons/0008-node-check-misses-esm-syntax-errors.md)）。
 
 ## v0.5 專案團隊介面

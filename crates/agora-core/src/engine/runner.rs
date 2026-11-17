@@ -47,7 +47,7 @@ pub(crate) struct Runner {
     pub round_offset: u32,
     /// Where CLI agents run: the project, or the isolated worktree once created.
     pub workdir: std::sync::Mutex<PathBuf>,
-    /// 專案快照 for planning/discussion turns.
+    /// 程式庫快照 for planning/discussion turns.
     pub snapshot: Option<String>,
     /// A gate decision to apply first (resuming a workshop after a restart).
     pub resume: std::sync::Mutex<Option<GateDecision>>,
@@ -61,6 +61,15 @@ pub(crate) struct TurnPlan {
     pub access: Access,
     /// 專案團隊: the roles this call plays (empty outside team stages).
     pub team_roles: Vec<String>,
+    /// v0.6: skills to inject (`skills::skills_for`).
+    pub skills: Vec<&'static str>,
+}
+
+impl TurnPlan {
+    pub fn with_skills(mut self, skills: Vec<&'static str>) -> Self {
+        self.skills = skills;
+        self
+    }
 }
 
 const PLANNING_ROLES: &[Role] = &[
@@ -75,7 +84,7 @@ const PLANNING_ROLES: &[Role] = &[
 
 impl Runner {
     pub fn plan(&self, p: &Participant, role: Role, round: u32, ask: String, access: Access) -> TurnPlan {
-        TurnPlan { participant: p.clone(), role, round, ask, access, team_roles: vec![] }
+        TurnPlan { participant: p.clone(), role, round, ask, access, team_roles: vec![], skills: vec![] }
     }
 
     /// A read-only team-stage call that plays `roles`.
@@ -171,7 +180,7 @@ impl Runner {
         Ok(())
     }
 
-    fn cwd(&self) -> PathBuf {
+    pub(crate) fn cwd(&self) -> PathBuf {
         self.workdir.lock().unwrap().clone()
     }
 
@@ -196,10 +205,11 @@ impl Runner {
         self.check_cancel()?;
         let used = self.turns_used.fetch_add(1, Ordering::SeqCst);
         if used >= self.max_turns {
-            self.note(NoteLevel::Guard, format!("已達本議題的發言上限（{} 次）——依設計停止，保留目前結果。", self.max_turns)).await;
+            self.note(NoteLevel::Guard, format!("已達本專案的發言上限（{} 次）——依設計停止，保留目前結果。", self.max_turns)).await;
             return Err(Stop::Budget(self.max_turns).into());
         }
-        let TurnPlan { participant, role, round, ask, access, team_roles } = plan;
+        let TurnPlan { participant, role, round, ask, access, team_roles, skills } = plan;
+        let (skills_text, skill_receipts) = crate::skills::inject(crate::skills::registry(), &skills);
         let mut provider = self.engine.provider(&participant.provider).ok_or_else(|| anyhow!("找不到模型提供者 {}", participant.provider))?;
         let mut model = participant.model.clone().or_else(|| self.settings.default_models.get(provider.id()).cloned().filter(|m| !m.is_empty()));
 
@@ -293,6 +303,7 @@ impl Runner {
                 ask: &ask,
                 snapshot: self.snapshot.as_deref().filter(|_| PLANNING_ROLES.contains(&role)),
                 plan: approved_plan.as_deref().filter(|_| use_plan),
+                skills: &skills_text,
             });
             let turn = Turn {
                 index: r.turns.len() as u32,
@@ -315,6 +326,7 @@ impl Runner {
                 effort,
                 effective_effort,
                 team_roles,
+                skills: skill_receipts,
             };
             r.turns.push(turn.clone());
             r.updated_at = now_ms();
@@ -489,9 +501,9 @@ impl Runner {
         }
         let project = PathBuf::from(&self.project.path);
         let (ws, note) = if !self.spec.isolate {
-            (None, (NoteLevel::Warn, "已關閉隔離：模型會直接修改專案資料夾。".to_string()))
+            (None, (NoteLevel::Warn, "已關閉隔離：模型會直接修改程式庫資料夾。".to_string()))
         } else if !git::is_repo(&project).await {
-            (None, (NoteLevel::Warn, "專案不是 git repo，無法隔離：模型會直接修改專案資料夾。".to_string()))
+            (None, (NoteLevel::Warn, "程式庫不是 git repo，無法隔離：模型會直接修改程式庫資料夾。".to_string()))
         } else {
             let root = self.engine.store.worktrees_dir().join(&self.session_id);
             let branch = format!("agora/{}", self.session_id);
@@ -515,7 +527,7 @@ impl Runner {
                         ),
                     ),
                 ),
-                Err(e) => (None, (NoteLevel::Warn, format!("無法建立隔離工作區（{e:#}），改為直接修改專案資料夾。"))),
+                Err(e) => (None, (NoteLevel::Warn, format!("無法建立隔離工作區（{e:#}），改為直接修改程式庫資料夾。"))),
             }
         };
         let ws = ws.unwrap_or(Workspace {
@@ -544,7 +556,7 @@ impl Runner {
             Ok(d) => {
                 self.note(
                     NoteLevel::Info,
-                    format!("隔離工作區共變更 {} 個檔案（+{} −{}）。檢查 diff 後可「套用到專案」或「丟棄」。", d.files.len(), d.added, d.removed),
+                    format!("隔離工作區共變更 {} 個檔案（+{} −{}）。檢查 diff 後可「套用到程式庫」或「丟棄」。", d.files.len(), d.added, d.removed),
                 )
                 .await
             }

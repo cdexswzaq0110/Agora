@@ -34,7 +34,7 @@ export function renderBadge() {
     let b = link.querySelector('.badge');
     if (n && !b) { b = document.createElement('span'); b.className = 'badge'; link.appendChild(b); }
     if (b) {
-      if (n) { b.textContent = n > 99 ? '99+' : String(n); b.setAttribute('aria-label', `${n} 個議題等待核准`); } else b.remove();
+      if (n) { b.textContent = n > 99 ? '99+' : String(n); b.setAttribute('aria-label', `${n} 個專案等待核准`); } else b.remove();
     }
   }
   document.title = (n ? `(${n}) ` : '') + 'Agora';

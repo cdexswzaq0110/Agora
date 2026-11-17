@@ -13,6 +13,7 @@ import { refreshAttention, scheduleAttention, announce, refreshDigestState } fro
 import { initShortcuts } from './shortcuts.js';
 import { initMotion, pageEnter } from './motion.js';
 import { initCommandPalette } from './cmdk.js';
+import { renderSkills } from './skills.js';
 
 const view = () => $('#view');
 window.__agora = S; // debugging aid (state of this page only)
@@ -43,6 +44,7 @@ async function route() {
   else if (hash.startsWith('#/sessions')) { setNav('home'); await renderHome(); }
   else if (hash.startsWith('#/digest')) { setNav('digest'); await renderDigest(); }
   else if (hash.startsWith('#/usage')) { setNav('usage'); await renderUsage(); }
+  else if (hash.startsWith('#/skills')) { setNav(''); await renderSkills(); }
   else if (hash.startsWith('#/settings')) { setNav('settings'); await renderSettings(); }
   // v0.5: the project team is the home page (`#/`, and the older `#/team`).
   else { setNav('team'); await renderTeam(); }

@@ -2,7 +2,7 @@
 //!
 //! A write session in a git repo gets its own worktree on branch `agora/<session>` created from
 //! `HEAD`, under the Agora data directory. The CLI agents edit there; the user's working tree
-//! is untouched until they press "套用到專案".
+//! is untouched until they press "套用到程式庫".
 //!
 //! Agora never commits in the worktree: the diff is `git add -A` + `git diff --cached <base>`.
 //! That means no author identity is needed and the project's commit hooks never run on
@@ -223,4 +223,65 @@ mod tests {
         assert!(git(&repo, &["rev-parse", "--verify", "agora/test"]).await.is_err(), "branch deleted");
         let _ = std::fs::remove_dir_all(&base_dir);
     }
+}
+
+/// v0.6 work fingerprint (after review-bridge's version samples; red-team #9): HEAD, then every
+/// path whose working-tree content differs from HEAD — staged or not — and every untracked file
+/// git does not ignore, each by path and current content (streamed), plus submodule status. It
+/// does not depend on the index: `git::diff` stages with `git add -A`, and the same content must
+/// give the same fingerprint before and after. Ignored files and the environment are **not**
+/// covered. Read-only: `--no-optional-locks` never refreshes the index.
+/// `Ok(None)` = not a git work tree (the version is unknown).
+pub async fn fingerprint(dir: &Path) -> Result<Option<String>> {
+    use sha2::{Digest, Sha256};
+    use tokio::io::AsyncReadExt;
+    if !is_repo(dir).await {
+        return Ok(None);
+    }
+    let mut h = Sha256::new();
+    let head = git(dir, &["--no-optional-locks", "rev-parse", "HEAD"]).await.ok();
+    h.update(b"head\0");
+    h.update(head.as_deref().unwrap_or("unborn").as_bytes());
+
+    // Paths that differ from HEAD (working tree vs HEAD, so staging is irrelevant), and untracked.
+    let changed = match head {
+        Some(_) => git_bytes(dir, &["--no-optional-locks", "-c", "core.quotepath=off", "diff", "--name-only", "-z", "HEAD"]).await?,
+        None => git_bytes(dir, &["--no-optional-locks", "ls-files", "-z"]).await?,
+    };
+    let untracked = git_bytes(dir, &["--no-optional-locks", "ls-files", "--others", "--exclude-standard", "-z"]).await?;
+    let mut paths: Vec<String> = changed
+        .split(|b| *b == 0)
+        .chain(untracked.split(|b| *b == 0))
+        .filter(|p| !p.is_empty())
+        .map(|p| String::from_utf8_lossy(p).into_owned())
+        .collect();
+    paths.sort();
+    paths.dedup();
+    let mut buf = vec![0u8; 64 * 1024];
+    for rel in paths {
+        h.update(b"\0path\0");
+        h.update(rel.as_bytes());
+        let mut f = match tokio::fs::File::open(dir.join(&rel)).await {
+            Ok(f) => f,
+            Err(_) => {
+                h.update(b"\0deleted");
+                continue;
+            }
+        };
+        let mut fh = Sha256::new();
+        loop {
+            let n = f.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            fh.update(&buf[..n]);
+        }
+        h.update(fh.finalize());
+    }
+
+    // Submodules (empty when there are none).
+    let subs = git(dir, &["--no-optional-locks", "submodule", "status", "--recursive"]).await.unwrap_or_default();
+    h.update(b"\0submodules\0");
+    h.update(subs.as_bytes());
+    Ok(Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect()))
 }

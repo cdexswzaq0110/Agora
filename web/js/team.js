@@ -74,7 +74,7 @@ async function loadWorkflowList() {
   try {
     const list = await api(`/api/workflows?project_id=${encodeURIComponent(S.projectId)}`);
     if (!$('#workflowList')) return;
-    box.innerHTML = list.length ? list.map(workflowCard).join('') : '<div class="empty-state wide">這個專案還沒有工作流。從上方寫下第一個構想。</div>';
+    box.innerHTML = list.length ? list.map(workflowCard).join('') : '<div class="empty-state wide">這個程式庫還沒有工作流。從上方寫下第一個構想。</div>';
   } catch (e) { box.innerHTML = `<div class="empty-state wide">讀取失敗：${esc(e.message)}</div>`; }
 }
 
@@ -95,7 +95,7 @@ export async function renderTeam() {
     <div class="team-home">
       <section class="team-composer block" aria-labelledby="newIdeaTitle"><div class="block-head"><span class="index">01 / IDEA</span><h2 id="newIdeaTitle">新構想</h2></div>
         <form id="ideaForm"><div class="team-form-grid">
-          <label class="field"><span>專案</span><select id="teamProject" required>${projectOptions()}</select></label>
+          <label class="field"><span>程式庫</span><select id="teamProject" required>${projectOptions()}</select></label>
           <label class="field"><span>標題（選填）</span><input id="ideaTitle" name="title" type="text" maxlength="120" placeholder="例如：離線優先的專案筆記"></label>
         </div>
         <label class="field idea-field"><span>構想</span><textarea id="ideaText" name="idea" required maxlength="${teamInfo.max_idea_chars}" placeholder="想解決什麼問題？給誰用？有哪些限制、已知條件、想用或不想用的技術？寫得越具體，可行性與技術分析越準。"></textarea><small id="ideaCount">0／${teamInfo.max_idea_chars}</small></label>
@@ -103,9 +103,9 @@ export async function renderTeam() {
         <fieldset class="team-choice depth-choice"><legend>深度</legend><div id="depthOptions">${depthOptions()}</div></fieldset>
         <div class="composer-foot"><button class="btn primary" type="submit" id="createWorkflow" data-magnetic>建立工作流 ↗</button><span class="hint">建立後從「構想收斂」開始，每個階段都由你核准。</span></div></form>
       </section>
-      <aside class="team-roster block" aria-labelledby="rosterTitle"><div class="block-head"><span class="index">TEAM / 18</span><h2 id="rosterTitle">你的團隊</h2></div>${rosterPanel()}</aside>
+      <aside class="team-roster block" aria-labelledby="rosterTitle"><div class="block-head"><span class="index">TEAM / 18</span><h2 id="rosterTitle">你的團隊</h2></div>${rosterPanel()}<p class="team-methods"><a href="#/skills">方法（skills）→</a></p></aside>
     </div>
-    <section class="block"><div class="block-head"><span class="index">02 / WORK</span><h2>這個專案的工作流</h2></div><div id="workflowList" class="workflow-list" aria-live="polite"><div class="empty-state wide">載入中…</div></div></section>
+    <section class="block"><div class="block-head"><span class="index">02 / WORK</span><h2>這個程式庫的工作流</h2></div><div id="workflowList" class="workflow-list" aria-live="polite"><div class="empty-state wide">載入中…</div></div></section>
     <section class="block" aria-labelledby="pipelineTitle"><div class="block-head"><span class="index">03 / FLOW</span><h2 id="pipelineTitle">這個構想會怎麼跑</h2><span class="aside">依你選的類型與深度</span></div><div id="teamPipeline">${pipeline('standard', 'general')}</div></section>`;
   bindTeam();
   loadWorkflowList();
@@ -208,7 +208,7 @@ function artifacts(w) {
 
 function tasks(w) {
   if (!w.tasks.length) return '<p class="muted">「任務拆分」核准後會產生任務。</p>';
-  return w.tasks.map((task) => `<article class="workflow-task"><div><h3>${esc(task.title)}</h3><div class="md">${md(task.body)}</div></div>${task.session_id ? `<a class="btn" href="#/s/${esc(task.session_id)}">開啟議題 ↗</a>` : `<button class="btn" type="button" data-start-task="${esc(task.id)}">交給工作坊 ↗</button>`}</article>`).join('');
+  return w.tasks.map((task) => `<article class="workflow-task"><div><h3>${esc(task.title)}</h3><div class="md">${md(task.body)}</div></div>${task.session_id ? `<a class="btn" href="#/s/${esc(task.session_id)}">開啟專案 ↗</a>` : `<button class="btn" type="button" data-start-task="${esc(task.id)}">交給工作坊 ↗</button>`}</article>`).join('');
 }
 
 function preserveView() {
@@ -234,7 +234,7 @@ export async function renderWorkflow(id, { live = false } = {}) {
     <section class="block workflow-roster"><div class="block-head"><span class="index">Team / 18</span><h2>團隊名冊</h2><span class="aside">目前／下一階段的角色分工與最近紀錄</span></div>${roster(w)}</section>
     <section class="block"><div class="block-head"><span class="index">Docs</span><h2>已核准的文件</h2></div>${artifacts(w)}</section>
     <section class="block" id="workflowTasks"><div class="block-head"><span class="index">Tasks</span><h2>任務清單</h2></div><div class="workflow-tasks">${tasks(w)}</div></section>
-    ${S.whoami?.local ? '<section class="workflow-export"><button class="btn quiet" type="button" id="exportWorkflow">匯出到專案（docs/agora/…）</button></section>' : ''}`;
+    ${S.whoami?.local ? '<section class="workflow-export"><button class="btn quiet" type="button" id="exportWorkflow">匯出到程式庫（docs/agora/…）</button></section>' : ''}`;
   saved.open.forEach((key) => { const d = $(`details[data-detail="${CSS.escape(key)}"]`); if (d) d.open = true; });
   bindWorkflow(w);
   if (live) {

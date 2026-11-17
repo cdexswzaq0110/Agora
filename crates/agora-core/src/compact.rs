@@ -150,7 +150,7 @@ pub fn render(entries: &[TranscriptEntry], budget_chars: usize, keep_recent: usi
     let kept_older = &older[dropped..];
     let mut older_blocks = Vec::new();
     if dropped > 0 {
-        older_blocks.push(format!("〔記憶壓縮：省略最早的 {dropped} 則發言；全文保留在議題紀錄〕\n"));
+        older_blocks.push(format!("〔記憶壓縮：省略最早的 {dropped} 則發言；全文保留在專案紀錄〕\n"));
     }
     if !kept_older.is_empty() {
         let per_older = (older_budget / kept_older.len()).max(MIN_PER_OLDER) - 60;
@@ -165,7 +165,7 @@ pub fn render(entries: &[TranscriptEntry], budget_chars: usize, keep_recent: usi
             compressed.push(CompressionRecord { index: e.index, original_chars: n, kept_chars: kept });
             older_blocks.push(block(
                 &e.header,
-                &format!("{summary}\n〔記憶壓縮：原文 {n} 字 → 摘要 {kept} 字；全文保留在議題紀錄〕"),
+                &format!("{summary}\n〔記憶壓縮：原文 {n} 字 → 摘要 {kept} 字；全文保留在專案紀錄〕"),
             ));
         }
     }

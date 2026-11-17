@@ -1,4 +1,4 @@
-//! 專案快照 — a small, deterministic picture of the project (file tree, README head, recent
+//! 程式庫快照 — a small, deterministic picture of the project (file tree, README head, recent
 //! commits) put into planning/discussion prompts so proposals start grounded. The CLI agents
 //! can still read any file themselves; this just saves them the first exploratory turns.
 

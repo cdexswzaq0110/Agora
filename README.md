@@ -13,11 +13,20 @@
 
 ---
 
+## v0.6 重點：可稽核的審查、Serendipity skill
+
+- **審查結論由程式判定**（參考 [review-bridge](https://github.com/fortes1219/review-bridge)）：方案核准時，驗收條件被切成 AC1…ACn 並封存；實作後先做**規格審查**（逐條判定，通過一定要有證據），全部通過才做**品質審查**。缺條件、沒證據、版本對不上的審查回覆一律不算數。專案頁直接看得到每一條的判定與證據。
+- **版本指紋**：驗證前、交給審查者前、審查後各取一次 git 指紋；審查期間工作區有變動，那次審查就作廢。
+- **唯讀證明**：設定頁可以實際證明審查者寫不進檔案；沒證明過的，結論最高只到「推論」。
+- **Serendipity skill**：使用者自己的 harness [Serendipity-Epiphany](https://github.com/cdexswzaq0110/Serendipity-Epiphany) 升級為 v2.0.0——9 個核心 skill（Agent Skills 標準，Claude Code 與 Codex 共用）。Agora 依團隊階段與工作坊步驟**自己注入**對應的 skill（不靠 CLI 自動觸發），每則發言都記錄用了哪個 skill；Skills 頁看得到版本、驗證狀態與使用次數。[Serendipity-Epiphany-Codex](https://github.com/cdexswzaq0110/Serendipity-Epiphany-Codex) 改為從同一份來源同步 skill。
+- **用語**：「議題」改叫**專案**；原本的「專案」（工作資料夾）改叫**程式庫**。
+- 設計、互評與紅隊：[docs/design/2026-11-17-v0.6](docs/design/2026-11-17-v0.6/05-final-plan.md)；技術說明：[docs/tech/15](docs/tech/15-review-and-skills.md)；驗收清單：[docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。
+
 ## v0.5 重點：專案團隊
 
 - **專案團隊**（導覽「團隊」）：寫下一個構想，由 PM、UX、SA、Architect、SD、DBA、Dev、QA、DevOps/SRE、LLM、NLP、AI、系統設計師、系統架構師、資料分析師、ML、MLOps、DL 共 18 個角色，分五個階段替你做事：**構想收斂 → 可行性分析 → 需求與體驗 → 技術設計 → 任務拆分**。每個階段都停下來等你核准；可行性分析可以直接決定「不做」。任務清單核准後，每一項可以一鍵交給方案工作坊實作。
 - **成本看得見**：快速 5 次、標準 9 次（AI 類 11 次）模型呼叫；開始前顯示，超過工作流上限要你確認。每個角色都留下「完整／簡查／不適用」紀錄，缺席的角色標成「缺漏」，不會假裝通過。
-- 上游文件改版時，依據舊版的下游文件自動標成「已過期」；重複點擊不會多開議題；文件可以匯出到專案的 `docs/agora/`。設計與紅隊修訂：[docs/design/2026-11-16-v0.5](docs/design/2026-11-16-v0.5/05-final-plan.md)；技術說明：[docs/tech/14](docs/tech/14-team-workflow.md)。
+- 上游文件改版時，依據舊版的下游文件自動標成「已過期」；重複點擊不會多開專案；文件可以匯出到專案的 `docs/agora/`。設計與紅隊修訂：[docs/design/2026-11-16-v0.5](docs/design/2026-11-16-v0.5/05-final-plan.md)；技術說明：[docs/tech/14](docs/tech/14-team-workflow.md)。
 - **動態效果與命令面板**（GPT 實作）：參考 [cdexswzaq0110.github.io](https://cdexswzaq0110.github.io/) 的動態語彙；Ctrl／⌘＋K 開命令面板；設定可選自動／開／關，降低動態時全部停用。
 - **本機擴充**：個人的內容（例如自己的桌寵角色、助理人設）放在 本機擴充（`web/local/`，git 忽略，只在自己的電腦）；公開的 repo 與 Release 不包含它們，只有通用的助理聊天 API。
 - **Tailscale**：讀取實際的 `tailscale serve` 設定，只在空的連接埠（443／8443／10000）加上 Agora，不覆蓋你已有的服務。
@@ -27,22 +36,22 @@
 - 一樣先讓 Claude 與 GPT 提案、互評、紅隊審視再實作（[docs/design/2026-11-16-v0.4](docs/design/2026-11-16-v0.4/05-final-plan.md)）；手機 QR 連線則直接**分派給 GPT 實作**，Claude 審查後合併。
 - **推理強度可調**：每位參與者都能選 low…max（依模型實際支援的值；Codex 讀它自己的模型清單、Claude 讀 `--help`），伺服器會擋下不支援的值。
 - **情報對照昨天**：新上榜、升溫（同來源同指標 +30% 且 +10 以上）、連續上榜天數、關注主題的變化；不多花任何模型呼叫。導覽列有未讀點，手機讀過電腦也算讀過。
-- **方案段落留言**：核准前可以對方案的某一段留言，修訂時逐條送給總結者。結論會建議一句「存入專案記憶」，你可以改了再存。
+- **方案段落留言**：核准前可以對方案的某一段留言，修訂時逐條送給總結者。結論會建議一句「存入程式庫記憶」，你可以改了再存。
 - 手機底部導覽、鍵盤快捷鍵（`?` 看全部，可關閉）、情報／用量／設定三頁重整（目錄、未儲存提醒）。
 - 修正：隔離 CLI 個人設定後，Codex 實作者其實寫不進檔案（[lessons/0011](docs/lessons/0011-isolating-cli-config-dropped-codex-write-sandbox.md)）。
 
 ## v0.3 重點（介面）
 
 - 先讓 Claude 與 GPT 各自提案、互評、整合，GPT 再紅隊審視，然後才實作：過程全文在 [docs/design/2026-11-16-ui-v0.3](docs/design/2026-11-16-ui-v0.3/05-final-plan.md)。
-- **首頁工作台**：第一個畫面就能寫議題；頂部的待辦列與導覽徽章告訴你哪個方案在等你核准；一行流程摘要說清楚會發生什麼。
-- **議題頁先看成果**：核准面板是「方案文件＋固定的決策欄」；討論依輪收合，每則發言留一行摘要；側欄有階段目錄。
+- **首頁工作台**：第一個畫面就能寫專案；頂部的待辦列與導覽徽章告訴你哪個方案在等你核准；一行流程摘要說清楚會發生什麼。
+- **專案頁先看成果**：核准面板是「方案文件＋固定的決策欄」；討論依輪收合，每則發言留一行摘要；側欄有階段目錄。
 - 鍵盤操作、ARIA 語意與 `aria-live` 宣告、手機 44px 觸控、深色主題都在瀏覽器量測過（還沒用實際的螢幕閱讀器測）；示範模式現在預設只用模擬模型。
 
 ## v0.2 重點
 
 - **方案工作坊**（預設模式）：獨立提案 → 互評 → 整合成有驗收標準的方案 →（紅隊）→ **你核准** → 在 git worktree 實作 → 驗證 → 依驗收標準審查 → 你看 diff 再決定套用。
 - **每日技術情報**：每天整理 Hacker News、GitHub Trending、Lobsters、Reddit、dev.to、Hugging Face Papers 的熱門項目，產出附來源編號的繁體中文摘要。
-- 另有議題範本、ADR 與 lesson 匯出、額度不足時自動改派、分岔、盲審、檢索式記憶、模式比較、排程議題、QR 配對、語音輸入、用量圖表、MCP server。
+- 另有專案範本、ADR 與 lesson 匯出、額度不足時自動改派、分岔、盲審、檢索式記憶、模式比較、排程專案、QR 配對、語音輸入、用量圖表、MCP server。
 - 文件：[技術文件](docs/tech/README.md)、[開發日誌](docs/devlog/README.md)、[講解指南](docs/tech/presentation-guide.md)。
 
 ## 用手機連線
@@ -61,15 +70,15 @@
 
 打不開時：確認手機的 Tailscale 開關是開的、兩邊是同一個帳號；區網則確認同一個 Wi‑Fi、防火牆已允許，並在網卡清單裡選實體網卡（不要選 vEthernet、WSL、VMware）。
 
-## 這個專案在解什麼問題
+## 這個程式庫在解什麼問題
 
 做專案時，常常想讓兩個模型各看一次、互相挑錯，或者正反方吵一架再下結論。但手動在兩個 CLI 之間複製貼上很累，也看不出還剩多少額度。
 
-Agora 把 **Claude Code CLI** 與 **Codex CLI** 當成兩位成員，用四種固定的協作方式排程它們。每個議題都有成本上限，每個結論都附上[證據等級](#證據等級)。
+Agora 把 **Claude Code CLI** 與 **Codex CLI** 當成兩位成員，用四種固定的協作方式排程它們。每個專案都有成本上限，每個結論都附上[證據等級](#證據等級)。
 
 ```mermaid
 flowchart LR
-    U["你的議題"] --> E["Agora 引擎"]
+    U["你的專案"] --> E["Agora 引擎"]
     E -->|claude -p| C["Claude Code CLI<br/>（Claude 訂閱）"]
     E -->|codex exec| G["Codex CLI<br/>（ChatGPT 訂閱）"]
     C --> V["結論 + 證據等級"]
@@ -108,7 +117,7 @@ flowchart LR
 ## 記憶與驗證
 
 - **記憶壓縮**：每則發言都會帶入前面的討論。超過門檻（預設 24,000 字）時，最近的發言保留原文，較早的發言改成擷取式摘要，並加上看得見的標記。全文一律保留在紀錄裡。
-- **專案記憶**：議題結束後按「存入專案記憶」，結論會變成一行決策紀錄，之後每個議題都會帶入（超過 3,000 字自動摘要）。
+- **程式庫記憶**：專案結束後按「存入程式庫記憶」，結論會變成一行決策紀錄，之後每個專案都會帶入（超過 3,000 字自動摘要）。
 - **驗證流程**：單人和協做模式可以設定驗證指令，例如 `cargo test`。驗證失敗時，結果會回饋給審查者和執行者。
 
 ### 證據等級
@@ -163,7 +172,7 @@ cargo build -p agora-desktop --release
 ```text
 crates/agora-core/     引擎：CLI 提供者、四種模式、用量、記憶壓縮、驗證、儲存（無 UI 相依）
   src/provider/          claude.rs · codex.rs · mock.rs · proc.rs（環境清理）· resolve.rs · stream.rs
-  src/engine.rs          議題排程、成本上限、額度保護、插話、取消
+  src/engine.rs          專案排程、成本上限、額度保護、插話、取消
   tests/engine_modes.rs  四種模式的端到端測試（模擬提供者，不花額度）
 crates/agora-server/   HTTP + SSE 伺服器與信任模型；內嵌 web/；也是無視窗版的執行檔
 src-tauri/             Tauri 桌面殼：主視窗、系統匣、置頂用量小工具、原生通知

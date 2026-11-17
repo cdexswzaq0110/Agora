@@ -1,4 +1,4 @@
-//! 議題範本 (Playbooks) — one-click session presets distilled from the user's skill
+//! 專案範本 (Playbooks) — one-click session presets distilled from the user's skill
 //! libraries (Serendipity-Epiphany, mattpocock `grill-me`/`tdd`/`to-spec`, milktea, …).
 
 use serde::{Deserialize, Serialize};

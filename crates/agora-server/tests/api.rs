@@ -391,3 +391,27 @@ async fn v04_remember_bodies_digest_state_and_pairing_rules() {
     let (s, _, _) = call(app(&st, PHONE), post(&path, "192.168.1.5:4718", json!({"line": "x"}))).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn skills_are_listed_verified_and_readonly_proof_is_local_only() {
+    let st = state();
+    let h = "127.0.0.1:4717";
+    let (s, _, v) = call(app(&st, LOCAL), get("/api/skills", h)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["ok"], true, "{v}");
+    let core: Vec<&Value> = v["skills"].as_array().unwrap().iter().filter(|x| x["tier"] == "core").collect();
+    assert_eq!(core.len(), 9);
+    assert!(core.iter().all(|x| x["ok"] == true && x["sha256"].as_str().unwrap().len() == 64));
+    let spec = core.iter().find(|x| x["name"] == "se-spec-review").unwrap();
+    assert!(spec["used_by"].as_array().unwrap().iter().any(|u| u == "工作坊・規格審查"));
+
+    let (s, _, _) = call(app(&st, PHONE), post("/api/skills/prove-readonly", "192.168.1.5:4718", json!({ "provider": "mock-gpt" }))).await;
+    assert!(s == StatusCode::UNAUTHORIZED || s == StatusCode::FORBIDDEN);
+    let (s, _, proof) = call(app(&st, LOCAL), post("/api/skills/prove-readonly", h, json!({ "provider": "mock-gpt" }))).await;
+    assert_eq!(s, StatusCode::OK, "{proof}");
+    assert_eq!(proof["ok"], true, "a read-only mock never writes: {proof}");
+    let (_, _, providers) = call(app(&st, LOCAL), get("/api/providers", h)).await;
+    let gpt = providers.as_array().unwrap().iter().find(|p| p["id"] == "mock-gpt").unwrap();
+    assert_eq!(gpt["readonly_proven"], true);
+    assert_eq!(gpt["readonly_proof"]["ok"], true);
+}

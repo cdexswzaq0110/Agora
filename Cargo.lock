@@ -10,22 +10,24 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agora-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
  "getrandom 0.3.4",
  "reqwest 0.12.28",
+ "rust-embed",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "tokio-util",
 ]
 
 [[package]]
 name = "agora-desktop"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "agora-core",
  "agora-server",
@@ -37,7 +39,7 @@ dependencies = [
 
 [[package]]
 name = "agora-server"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "agora-core",
  "anyhow",

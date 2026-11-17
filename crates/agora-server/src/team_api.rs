@@ -91,3 +91,40 @@ pub(crate) async fn export_workflow(State(st): State<AppState>, Path(id): Path<S
     let paths = st.engine.export_workflow(&id).await?;
     Ok(Json(json!({ "paths": paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>() })))
 }
+
+/// v0.6: the vendored Serendipity skill bundle — version, verification, where each skill is used,
+/// and how often it was really sent.
+pub(crate) async fn list_skills(State(st): State<AppState>) -> Json<Value> {
+    let reg = agora_core::skills::registry();
+    let usage = st.engine.skill_usage().await;
+    Json(json!({
+        "bundle_version": reg.bundle_version,
+        "source_repo": reg.source_repo,
+        "source_commit": reg.source_commit,
+        "ok": reg.ok,
+        "problem": reg.problem,
+        "skills": reg.skills.iter().map(|s| {
+            let u = usage.get(&s.name).cloned().filter(|_| s.tier == "core").unwrap_or_default();
+            json!({
+                "name": s.name, "description": s.description, "tier": s.tier, "sha256": s.sha256,
+                "ok": s.ok, "problem": s.problem, "references": s.references.len(),
+                "used_by": if s.tier == "core" { agora_core::skills::used_by(&s.name) } else { vec![] },
+                "injected": u.injected, "truncated": u.truncated,
+                "review_accepted": u.review_accepted, "review_rejected": u.review_rejected,
+            })
+        }).collect::<Vec<_>>(),
+    }))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ProveBody {
+    provider: String,
+}
+
+/// Spends one small CLI call: proves (or not) that this provider's read-only reviewer cannot write.
+pub(crate) async fn prove_readonly(State(st): State<AppState>, axum::Extension(c): axum::Extension<Caller>, Json(b): Json<ProveBody>) -> ApiResult<Value> {
+    if !c.local {
+        return Err(ApiError(StatusCode::FORBIDDEN, "唯讀證明只能在電腦本機執行".into()));
+    }
+    Ok(Json(json!(st.engine.prove_readonly(&b.provider).await?)))
+}

@@ -131,7 +131,7 @@ async fn discuss(api: &Api, args: &Value) -> Result<String, String> {
         "auto_approve": true,
     });
     let rec = api.post("/api/sessions", spec).await?;
-    let id = rec["id"].as_str().ok_or("Agora 沒有回傳議題 id")?.to_string();
+    let id = rec["id"].as_str().ok_or("Agora 沒有回傳專案 id")?.to_string();
     let wait = args.get("wait_seconds").and_then(Value::as_f64).unwrap_or(900.0).clamp(10.0, 3600.0);
     let t0 = Instant::now();
     loop {
@@ -141,7 +141,7 @@ async fn discuss(api: &Api, args: &Value) -> Result<String, String> {
             return Ok(render(&api.base, &r));
         }
         if t0.elapsed().as_secs_f64() > wait {
-            return Ok(format!("議題 {id} 仍在進行（{}）。稍後用 agora_session 讀取結果，或打開 {}/#/s/{id}", r["phase"].as_str().unwrap_or("進行中"), api.base));
+            return Ok(format!("專案 {id} 仍在進行（{}）。稍後用 agora_session 讀取結果，或打開 {}/#/s/{id}", r["phase"].as_str().unwrap_or("進行中"), api.base));
         }
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
@@ -177,7 +177,7 @@ async fn call_tool(api: &Api, name: &str, args: &Value) -> Result<String, String
             let id = args.get("id").and_then(Value::as_str).ok_or("缺少 id")?;
             let r = api.http.get(format!("{}/api/sessions/{id}/export.md", api.base)).send().await.map_err(|e| e.to_string())?;
             if !r.status().is_success() {
-                return Err(format!("找不到議題 {id}"));
+                return Err(format!("找不到專案 {id}"));
             }
             let text = r.text().await.map_err(|e| e.to_string())?;
             Ok(text.chars().take(30_000).collect())

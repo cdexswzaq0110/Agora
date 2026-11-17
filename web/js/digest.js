@@ -182,7 +182,7 @@ function bind(d) {
     S.c.prompt = `這項技術／專案值得我們採用嗎？\n\n「${i.title}」\n來源：${i.url}${i.discussion_url ? `\n討論串：${i.discussion_url}` : ''}${i.summary ? `\n簡介：${i.summary}` : ''}\n\n我們的情境：`;
     saveComposer();
     location.hash = '#/sessions';
-    toast('已帶入議題，補上「我們的情境」後開始');
+    toast('已帶入專案，補上「我們的情境」後開始');
   };
 }
 

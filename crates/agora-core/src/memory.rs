@@ -1,4 +1,4 @@
-//! 檢索式專案記憶 — when project memory outgrows its budget, inject the entries most relevant
+//! 檢索式程式庫記憶 — when project memory outgrows its budget, inject the entries most relevant
 //! to the current question (TF-IDF over word tokens + CJK character bigrams) plus the most
 //! recent ones, in their original order, with a visible note of what was left out.
 //!
@@ -125,7 +125,7 @@ pub fn select(memory: &str, query: &str, budget: usize) -> String {
     idx.sort_unstable();
     let body: Vec<&str> = idx.iter().map(|&i| es[i].as_str()).collect();
     format!(
-        "〔檢索式記憶：專案記憶共 {n} 則，依本議題選出最相關與最近的 {} 則；其餘仍保存在專案記憶中〕\n{}",
+        "〔檢索式記憶：程式庫記憶共 {n} 則，依本專案選出最相關與最近的 {} 則；其餘仍保存在程式庫記憶中〕\n{}",
         idx.len(),
         body.join("\n")
     )

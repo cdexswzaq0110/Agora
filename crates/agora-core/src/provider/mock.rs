@@ -87,7 +87,63 @@ impl MockProvider {
         s
     }
 
+    /// The build number the review prompt names (「這是第 N 次實作」).
+    fn build_no(prompt: &str) -> u32 {
+        prompt.split("這是第 ").nth(1).and_then(|r| r.split(' ').next()).and_then(|n| n.trim().parse().ok()).unwrap_or(1)
+    }
+
+    /// v0.6 spec review: a `review.result` block over the contract named in the prompt.
+    /// Default: the first build fails AC1, later builds pass every condition. Markers:
+    /// `[mock:review-garbage]` (invalid JSON every time), `[mock:review-unverified]` (AC1
+    /// cannot be verified), `[mock:review-pass]` (everything passes from the first build).
+    fn spec_review_answer(&self, prompt: &str) -> String {
+        if prompt.contains("[mock:review-garbage]") {
+            return "全部通過！\n```review.result\n{oops\n```".into();
+        }
+        let sha = prompt.split("contract_sha256：").nth(1).and_then(|r| r.lines().next()).unwrap_or("").trim().to_string();
+        let mut ids: Vec<String> = Vec::new();
+        for part in prompt.split("\"id\": \"").skip(1) {
+            let id: String = part.chars().take_while(|c| *c != '"').collect();
+            if id.starts_with("AC") && !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        let first = Self::build_no(prompt) <= 1 && !prompt.contains("[mock:review-pass]");
+        let verdicts: Vec<String> = ids
+            .iter()
+            .map(|id| {
+                if id == "AC1" && prompt.contains("[mock:review-unverified]") {
+                    format!("{{\"id\":\"{id}\",\"verdict\":\"cannot_verify\",\"reason\":\"模擬：需要實機才能確認\"}}")
+                } else if id == "AC1" && first {
+                    format!("{{\"id\":\"{id}\",\"verdict\":\"fail\",\"evidence\":\"模擬：第一次實作還沒有處理空輸入\"}}")
+                } else {
+                    format!("{{\"id\":\"{id}\",\"verdict\":\"pass\",\"evidence_kind\":\"doc\",\"evidence\":\"模擬審查：已對照實作確認\"}}")
+                }
+            })
+            .collect();
+        format!(
+            "（模擬 {}）逐條判定如下。\n```review.result\n{{\"contract_sha256\":\"{sha}\",\"verdicts\":[{}]}}\n```",
+            self.family.label(),
+            verdicts.join(",")
+        )
+    }
+
+    /// v0.6 quality review: one low finding; `[mock:quality-high]` adds a high one on build 1.
+    fn quality_review_answer(&self, prompt: &str) -> String {
+        let mut findings = vec!["{\"id\":\"Q1\",\"severity\":\"low\",\"text\":\"模擬：命名可以更清楚\",\"location\":\"src/feature.rs:1\"}".to_string()];
+        if prompt.contains("[mock:quality-high]") && Self::build_no(prompt) <= 1 {
+            findings.push("{\"id\":\"Q2\",\"severity\":\"high\",\"text\":\"模擬：沒有處理錯誤\",\"location\":\"src/feature.rs:9\"}".into());
+        }
+        format!("（模擬 {}）\n```review.result\n{{\"findings\":[{}]}}\n```", self.family.label(), findings.join(","))
+    }
+
     fn answer(&self, prompt: &str) -> String {
+        if prompt.contains("【規格審查】") {
+            return self.spec_review_answer(prompt);
+        }
+        if prompt.contains("【品質審查】") {
+            return self.quality_review_answer(prompt);
+        }
         if prompt.contains(crate::team::TEAM_MARKER) && prompt.rsplit("## 你這一輪的任務").next().is_some_and(|a| a.contains(crate::team::TEAM_MARKER)) {
             return self.team_answer(prompt);
         }
@@ -198,6 +254,10 @@ impl Provider for MockProvider {
         let delay = if req.prompt.contains("[mock:slow]") { self.delay * 50 } else { self.delay };
         let text = self.answer(&req.prompt);
         // Lets tests exercise workspace isolation end to end: a "builder" that really edits.
+        // Test hook: the work tree changes while a spec review reads it (version_changed).
+        if req.prompt.contains("[mock:review-touch]") && req.prompt.contains("【規格審查】") {
+            let _ = std::fs::write(req.cwd.join(format!("touched-{n}.txt")), "changed during review\n");
+        }
         if req.access == crate::model::Access::Write && req.prompt.contains("[mock:write]") && req.prompt.contains("本輪身分：**執行者**") {
             let _ = std::fs::write(req.cwd.join("agora-mock.txt"), format!("written by {} ({n})\n", self.id));
         }

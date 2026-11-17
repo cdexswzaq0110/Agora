@@ -66,6 +66,16 @@ pub struct Settings {
     pub schedules: Vec<Schedule>,
     /// User-saved templates (built-ins live in `templates::builtins`).
     pub templates: Vec<Template>,
+    /// v0.6: per provider, the last check that a read-only reviewer really cannot write
+    /// (`Engine::prove_readonly`). Without a passing proof a review tops out at 推論.
+    pub readonly_proofs: BTreeMap<String, ReadonlyProof>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ReadonlyProof {
+    pub ok: bool,
+    pub at: u64,
+    pub detail: String,
 }
 
 impl Default for Settings {
@@ -91,6 +101,7 @@ impl Default for Settings {
             digest: DigestSettings::default(),
             schedules: vec![],
             templates: vec![],
+            readonly_proofs: BTreeMap::new(),
         }
     }
 }
@@ -213,7 +224,7 @@ impl Store {
 
     fn session_path(&self, id: &str) -> Result<PathBuf> {
         if !valid_id(id) {
-            bail!("無效的議題 id");
+            bail!("無效的專案 id");
         }
         Ok(self.root.join("sessions").join(format!("{id}.json")))
     }

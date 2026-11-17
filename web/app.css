@@ -501,7 +501,8 @@ button.link { background: none; border: 0; padding: 0; cursor: pointer; color: v
 /* workspace & diff */
 .workspace { margin-top: 1.4rem; border: 1px solid var(--hair); border-left: 3px solid var(--ink); background: var(--paper); padding: 1rem 1.2rem; display: grid; gap: 0.7rem; }
 .workspace .top { display: flex; flex-wrap: wrap; gap: 0.7rem; align-items: center; }
-.workspace code { font: 0.8rem/1.4 var(--font-mono); }
+.workspace code { font: 0.8rem/1.4 var(--font-mono); overflow-wrap: anywhere; word-break: break-all; }
+.workspace { min-width: 0; overflow-wrap: anywhere; }
 .diff .add, .diff-files .add { color: var(--ok); }
 .diff .del, .diff-files .del { color: var(--bad); }
 .diff-files { list-style: none; margin: 0.4rem 0; padding: 0; display: grid; gap: 0.25rem; font-size: 0.85rem; }
@@ -1031,3 +1032,47 @@ kbd { display: inline-block; min-width: 1.4em; padding: 0.1rem 0.35rem; border: 
 .phone-steps li.todo .step-state { color: var(--warn); }
 .pair-help { margin: 0; padding-left: 1.2rem; color: var(--muted); font-size: .86rem; line-height: 1.6; text-align: left; }
 @media (max-width: 900px) { .phone-guide { grid-template-columns: 1fr; } }
+
+/* ================================================================ v0.6 reviews, skills, read-only proof */
+.skill-tags { display:flex; flex-wrap:wrap; gap:.25rem; min-width:0; }
+.skill-tag { display:inline-flex; flex-wrap:wrap; gap:.25rem; max-width:100%; padding:.12rem .38rem; border:1px solid var(--hair); font-size:.68rem; overflow-wrap:anywhere; }
+.skill-tag b { color:var(--warn); font-weight:600; }
+.review-panel, .review-history { margin:1.25rem 0; padding:1rem; border:1px solid var(--line); background:var(--paper); }
+.acceptance-list, .review-history-list { display:grid; gap:.65rem; }
+.acceptance-row { display:grid; grid-template-columns:2rem minmax(0,1fr); gap:.7rem; padding:.75rem; border:1px solid var(--hair); }
+.acceptance-row h3, .acceptance-row p, .review-history h3, .review-history p { margin:0; overflow-wrap:anywhere; }
+.acceptance-row p { margin-top:.35rem; font-size:.86rem; }
+.result-shape { display:grid; place-items:center; width:1.7rem; height:1.7rem; border:2px solid currentColor; font-weight:800; }
+.result-pass .result-shape { border-radius:50%; color:var(--ok); }
+.result-fail .result-shape { color:var(--bad); }
+.result-cannot_verify .result-shape { border-radius:.5rem; color:var(--warn); }
+.finding-list { display:grid; gap:.55rem; margin:0; padding:0; list-style:none; }
+.finding-list li { display:flex; flex-wrap:wrap; align-items:baseline; gap:.5rem; padding:.6rem 0; border-top:1px solid var(--hair); overflow-wrap:anywhere; }
+.severity { padding:.1rem .35rem; border:1px solid currentColor; font-weight:700; font-size:.72rem; }
+.severity-high { color:var(--bad); } .severity-medium { color:var(--warn); } .severity-low { color:var(--muted); }
+.review-history > summary, .extended-skills > summary { cursor:pointer; font-weight:700; min-height:44px; }
+.review-history-list article { padding:.75rem 0; border-top:1px solid var(--hair); }
+.review-history time { color:var(--muted); font-size:.78rem; }
+.same-family, .review-next { color:var(--warn); }
+.skills-meta { display:flex; flex-wrap:wrap; gap:.7rem 1.2rem; overflow-wrap:anywhere; }
+.skills-table-wrap { max-width:100%; }
+.skills-table { width:100%; border-collapse:collapse; font-size:.82rem; }
+.skills-table th, .skills-table td { min-width:6rem; padding:.65rem; border:1px solid var(--hair); text-align:left; vertical-align:top; overflow-wrap:anywhere; }
+.skills-table th:first-child { min-width:14rem; }
+.skills-table small { display:block; margin-top:.25rem; color:var(--muted); }
+.skill-disabled { background:color-mix(in srgb, var(--bad) 8%, transparent); }
+.status-ok { color:var(--ok); font-weight:700; } .status-bad { color:var(--bad); }
+.readonly-proof { display:grid; gap:.35rem; padding:.65rem; border:1px solid var(--hair); }
+.readonly-proof p, .readonly-proof small { margin:0; }
+.readonly-proof .btn { justify-self:start; min-height:44px; }
+.team-methods { margin:1rem 0 0; }
+@media (max-width:760px) {
+  .review-panel, .review-history { padding:.75rem; }
+  .acceptance-row { grid-template-columns:1.7rem minmax(0,1fr); padding:.6rem; }
+  .skills-table, .skills-table tbody, .skills-table tr, .skills-table th, .skills-table td { display:block; width:100%; box-sizing:border-box; }
+  .skills-table thead { display:none; }
+  .skills-table tr { margin-bottom:.8rem; border:1px solid var(--line); }
+  .skills-table th, .skills-table td { min-width:0; border:0; border-top:1px solid var(--hair); }
+  .skills-table th { border-top:0; }
+  .skills-table td::before { content:attr(data-label); display:block; margin-bottom:.2rem; color:var(--muted); font-size:.68rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+}

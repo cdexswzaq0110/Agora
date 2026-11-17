@@ -18,3 +18,4 @@
 | 0012 | [合併重繪時，「只重畫一則」吃掉了「整頁重畫」](0012-coalesced-repaint-dropped-the-full-paint.md) | 已確認 | 強的請求升級已排程的畫格；即時畫面要測「中途進入」某個狀態 |
 | 0013 | [「動態效果：開」被三層「降低動態」的限制吃掉](0013-explicit-motion-on-was-clamped-at-three-layers.md) | 已確認 | 能覆寫系統偏好的設定要在每一層都檢查（`motion-forced`）；兩種系統設定都要驗收 |
 | 0014 | [在 Windows 用 Python 文字模式改檔，會把 LF 換成 CRLF](0014-python-text-mode-writes-crlf-on-windows.md) | 已確認 | 腳本改檔一律 `newline=''`；`CRLF will be replaced` 警告不能略過 |
+| 0015 | [在這個環境用 Bash heredoc 跑 Python，反斜線會被減半](0015-bash-heredoc-halves-backslashes.md) | 已確認 | 含反斜線的改檔腳本寫成檔案再執行；`PYTHONUTF8=1` |

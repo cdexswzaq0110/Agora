@@ -296,3 +296,27 @@ async fn tasks_hand_off_once_and_export_writes_versioned_files() {
     let first = std::fs::read_to_string(&files[0]).unwrap();
     assert!(first.contains("| PM | 完整 |"), "{first}");
 }
+
+/// Red-team #11: every team turn's skill receipts match an expected table written here,
+/// independently of `skills::skills_for`.
+#[tokio::test]
+async fn every_team_turn_gets_exactly_the_skills_of_its_stage_and_operation() {
+    let expected: &[(StageKind, &[&str], &[&str])] = &[
+        (StageKind::Discovery, &["se-problem-definition"], &[]),
+        (StageKind::Feasibility, &["se-feasibility"], &["se-feasibility", "se-spec-review"]),
+        (StageKind::Product, &["se-product-contract"], &["se-product-contract", "se-spec-review"]),
+        (StageKind::Design, &["se-technical-design"], &["se-technical-design", "se-spec-review"]),
+        (StageKind::Tasks, &["se-work-order"], &[]),
+    ];
+    let e = engine("skills");
+    let id = new_wf(&e, "團隊技能注入", Depth::Standard, ProjectKind::General).await.workflow.id;
+    for (kind, producer, integrator) in expected {
+        let r = run_and_approve(&e, &id, *kind).await;
+        for t in r.turns.iter().filter(|t| !t.seeded) {
+            let got: Vec<&str> = t.skills.iter().map(|s| s.id.as_str()).collect();
+            let want: &[&str] = if t.role == Role::Synthesizer { integrator } else { producer };
+            assert_eq!(got, want, "{kind:?} turn {} ({:?})", t.index, t.role);
+            assert!(t.skills.iter().all(|s| s.sha256.len() == 64 && !s.version.is_empty()));
+        }
+    }
+}

@@ -38,21 +38,21 @@
 | GET / POST | `/api/templates` | P | 內建加自訂範本；儲存自訂範本 |
 | DELETE | `/api/templates/{id}` | P | 刪除自訂範本 |
 
-## 議題
+## 專案
 
 | 方法 | 路徑 | 權限 | 說明 |
 |---|---|---|---|
-| GET | `/api/sessions?project=&q=` | P | 議題摘要清單；`q` 會搜尋標題、議題內容和所有發言 |
-| POST | `/api/sessions` | P | 用 `SessionSpec` 建立議題（見 [10](10-data-model.md)） |
+| GET | `/api/sessions?project=&q=` | P | 專案摘要清單；`q` 會搜尋標題、專案內容和所有發言 |
+| POST | `/api/sessions` | P | 用 `SessionSpec` 建立專案（見 [10](10-data-model.md)） |
 | GET | `/api/sessions/{id}` | P | 完整紀錄 |
 | GET | `/api/sessions/{id}/events` | P | **SSE**：先送 `snapshot`，之後是即時事件 |
 | POST | `/api/sessions/{id}/interject` | P | `{text}` |
-| POST | `/api/sessions/{id}/cancel` | P | 停止（等待核准中的議題也可以） |
+| POST | `/api/sessions/{id}/cancel` | P | 停止（等待核准中的專案也可以） |
 | POST | `/api/sessions/{id}/decide` | P | `{"action":"approve","plan"?,"verify_command"?}`、`{"action":"revise","feedback"?,"comments"?:[{block_id,heading,quote,text}],"plan_revision"?}`、`{"action":"reject","reason"?}`。段落留言最多 20 則、必須對應**目前版本**的段落（`plan.blocks`）、`plan_revision` 要相符；`feedback` 與留言不能都空，否則 400 |
 | GET | `/api/sessions/{id}/diff` | P | `{files:[{path,added,removed}], added, removed, patch, truncated}` |
-| POST | `/api/sessions/{id}/workspace/apply` | P | 把 worktree 的變更套用到專案（不 commit） |
+| POST | `/api/sessions/{id}/workspace/apply` | P | 把 worktree 的變更套用到程式庫（不 commit） |
 | POST | `/api/sessions/{id}/workspace/discard` | P | 丟棄 worktree |
-| POST | `/api/sessions/{id}/remember` | P | 把結論加進專案記憶。body 可省略（空的或 `{}` → 舊格式）；`{"line":"…"}` → 去掉換行、上限 300 字、不可為空，寫成 `- [日期] …【證據等級】` |
+| POST | `/api/sessions/{id}/remember` | P | 把結論加進程式庫記憶。body 可省略（空的或 `{}` → 舊格式）；`{"line":"…"}` → 去掉換行、上限 300 字、不可為空，寫成 `- [日期] …【證據等級】` |
 | GET | `/api/sessions/{id}/export.md` | P | 下載 Markdown（`Content-Disposition: attachment`） |
 | POST | `/api/sessions/{id}/export` | L | `{kind:"adr"\|"lesson"}` → 寫進專案的 `docs/adr/` 或 `docs/lessons/` |
 
@@ -61,7 +61,7 @@
 | 方法 | 路徑 | 權限 | 說明 |
 |---|---|---|---|
 | POST | `/api/experiments` | P | `{spec, modes:[…]}`：依序跑多種模式，一律唯讀 |
-| GET | `/api/experiments` / `/{id}` | P | 實驗清單；單一實驗與各議題的摘要 |
+| GET | `/api/experiments` / `/{id}` | P | 實驗清單；單一實驗與各專案的摘要 |
 | GET | `/api/digests` | P | `{dates, running, enabled, time}` |
 | GET | `/api/digests/{date\|latest}` | P | 一份情報（`Digest`）；v0.4 起含 `compared_with`、`topic_trends` 與每個項目的 `trend`（v0.4 以前存的檔案在讀取時補算，不回寫） |
 | GET | `/api/digests/state` | P | `{latest, generated_at, unread, running}`：導覽列「情報」的未讀點 |
@@ -73,17 +73,28 @@
 
 ## 專案團隊（v0.5）
 
-設計與紅隊修訂見 [14 · 專案團隊工作流](14-team-workflow.md)。階段就是一般的 plan-only 工作坊議題：核准、修訂、段落留言都用 `/api/sessions/{id}/decide`。
+設計與紅隊修訂見 [14 · 專案團隊工作流](14-team-workflow.md)。階段就是一般的 plan-only 工作坊專案：核准、修訂、段落留言都用 `/api/sessions/{id}/decide`。
 
 | 方法 | 路徑 | 權限 | 說明 |
 |---|---|---|---|
 | GET | `/api/team` | P | 18 個角色（`id, name, title, group, group_label, duty`）、5 個階段、各深度的呼叫數與上限（`depths.{quick,standard,full}.{general,ai}.{calls,cap}`）、`max_idea_chars` |
-| GET | `/api/workflows?project_id=` | P | `WorkflowView[]`；每次讀取都先從議題狀態對帳 |
+| GET | `/api/workflows?project_id=` | P | `WorkflowView[]`；每次讀取都先從專案狀態對帳 |
 | POST | `/api/workflows` | P | `{project_id, title?, idea, depth, kind, claude?, gpt?}` → `WorkflowView`；構想上限 8,000 字 |
 | GET | `/api/workflows/{id}` | P | `WorkflowView`：工作流本身，加上 `next`、各階段的呼叫計畫 `plans`、`calls_used`、`cap`；不存在 404 |
-| POST | `/api/workflows/{id}/stages/{kind}/start` | P | `kind` = `discovery`／`feasibility`／`product`／`design`／`tasks`；body `{}` 或 `{"raise_cap": true}`。回傳該階段的議題（進行中或等待核准時回傳同一個，冪等）。會超過工作流呼叫上限時 **409**，帶 `raise_cap` 確認後才開始；上游未核准或已過期時 400 |
-| POST | `/api/workflows/{id}/tasks/{task}/start` | P | 把任務交給工作坊（Claude＋GPT、隔離 worktree）；同一個任務重複點擊回傳同一個議題 |
+| POST | `/api/workflows/{id}/stages/{kind}/start` | P | `kind` = `discovery`／`feasibility`／`product`／`design`／`tasks`；body `{}` 或 `{"raise_cap": true}`。回傳該階段的專案（進行中或等待核准時回傳同一個，冪等）。會超過工作流呼叫上限時 **409**，帶 `raise_cap` 確認後才開始；上游未核准或已過期時 400 |
+| POST | `/api/workflows/{id}/tasks/{task}/start` | P | 把任務交給工作坊（Claude＋GPT、隔離 worktree）；同一個任務重複點擊回傳同一個專案 |
 | POST | `/api/workflows/{id}/export` | L | 把各階段文件寫進專案 `docs/agora/<id>/<nn>-<stage>-r<rev>.md`，回傳 `{paths}` |
+
+## Skills 與審查（v0.6）
+
+設計見 [15 · 可稽核的審查與 Serendipity skill](15-review-and-skills.md)。
+
+| 方法 | 路徑 | 權限 | 說明 |
+|---|---|---|---|
+| GET | `/api/skills` | P | `{bundle_version, source_repo, source_commit, ok, problem, skills: [{name, description, tier, sha256, ok, problem, references, used_by, injected, truncated, review_accepted, review_rejected}]}` |
+| POST | `/api/skills/prove-readonly` | L | `{provider}`：以唯讀模式請該 CLI 在暫存資料夾寫檔，檔案不存在才算證明；回傳 `{ok, at, detail}`，記在設定裡 |
+
+`/api/providers` 的每一項多了 `readonly_proof`（最後一次證明）與 `readonly_proven`；`/api/sessions/{id}` 的紀錄多了 `plan.contract`（驗收合約）、`reviews`（每次審查）與每則發言的 `skills`（收據）。結論的 `outcome` 新增 `acceptance_unverified`（有條件無法確認，交給你）與 `review_unusable`（審查回覆兩次都無法採用）。
 
 ## 助理聊天（v0.5）
 
@@ -108,4 +119,4 @@
 | `quota` | `snapshot` | 額度更新 |
 | `lagged` | — | 用戶端跟不上，應該重新抓一次紀錄 |
 
-`/api/events`（全域串流）只送低頻事件：先送 `hello`（附目前所有額度），之後是 `status`、`quota`、`digest`、`workflow`。`digest` 的欄位是 `status`（running、done、failed）、`date`、`error`。`workflow`（v0.5）的欄位是 `workflow_id`、`title`、`status`（active、stopped、done）、`next`（下一個要處理的階段）、`awaiting`（等你核准的階段議題 id）。
+`/api/events`（全域串流）只送低頻事件：先送 `hello`（附目前所有額度），之後是 `status`、`quota`、`digest`、`workflow`。`digest` 的欄位是 `status`（running、done、failed）、`date`、`error`。`workflow`（v0.5）的欄位是 `workflow_id`、`title`、`status`（active、stopped、done）、`next`（下一個要處理的階段）、`awaiting`（等你核准的階段專案 id）。

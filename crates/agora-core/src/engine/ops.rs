@@ -100,19 +100,19 @@ impl Engine {
                 Some(ctl) => ctl.record.lock().await.plan.clone(),
                 None => self.store.load_session(id).and_then(|r| r.plan),
             }
-            .ok_or_else(|| anyhow!("這個議題沒有方案"))?;
+            .ok_or_else(|| anyhow!("這個專案沒有方案"))?;
             validate_revision(&plan, feedback, comments, *plan_revision)?;
         }
         if let Some(ctl) = self.running.lock().await.get(id).cloned() {
-            let tx = ctl.gate.lock().await.take().ok_or_else(|| anyhow!("這個議題目前不在等待核准"))?;
-            tx.send(decision).map_err(|_| anyhow!("議題已結束"))?;
+            let tx = ctl.gate.lock().await.take().ok_or_else(|| anyhow!("這個專案目前不在等待核准"))?;
+            tx.send(decision).map_err(|_| anyhow!("專案已結束"))?;
             return Ok(());
         }
-        let rec = self.store.load_session(id).ok_or_else(|| anyhow!("找不到議題"))?;
+        let rec = self.store.load_session(id).ok_or_else(|| anyhow!("找不到專案"))?;
         if rec.status != Status::AwaitingApproval {
-            bail!("這個議題目前不在等待核准");
+            bail!("這個專案目前不在等待核准");
         }
-        let project = self.project(&rec.spec.project_id).ok_or_else(|| anyhow!("找不到專案"))?;
+        let project = self.project(&rec.spec.project_id).ok_or_else(|| anyhow!("找不到程式庫"))?;
         let used = rec.turns.iter().filter(|t| !t.seeded).count() as u32;
         let ctl = Arc::new(RunCtl::new(rec.clone()));
         self.running.lock().await.insert(rec.id.clone(), ctl.clone());
@@ -138,16 +138,16 @@ impl Engine {
     // ---------------------------------------------------------------- workspace
 
     fn finished_record(&self, id: &str) -> Result<SessionRecord> {
-        let r = self.store.load_session(id).ok_or_else(|| anyhow!("找不到議題"))?;
+        let r = self.store.load_session(id).ok_or_else(|| anyhow!("找不到專案"))?;
         if r.status.is_live() {
-            bail!("議題還在進行中，結束後才能套用或丟棄");
+            bail!("專案還在進行中，結束後才能套用或丟棄");
         }
         Ok(r)
     }
 
     fn worktree_parts(ws: &Workspace) -> Result<(PathBuf, String, String)> {
         if ws.kind != WorkspaceKind::Worktree {
-            bail!("這個議題是直接修改專案資料夾，沒有隔離工作區");
+            bail!("這個專案是直接修改程式庫資料夾，沒有隔離工作區");
         }
         if ws.state != WorkspaceState::Active {
             bail!("隔離工作區已經{}", if ws.state == WorkspaceState::Applied { "套用" } else { "丟棄" });
@@ -160,18 +160,18 @@ impl Engine {
     }
 
     pub async fn workspace_diff(&self, id: &str) -> Result<git::DiffSummary> {
-        let r = self.session(id).await.ok_or_else(|| anyhow!("找不到議題"))?;
-        let ws = r.workspace.ok_or_else(|| anyhow!("這個議題沒有修改檔案"))?;
+        let r = self.session(id).await.ok_or_else(|| anyhow!("找不到專案"))?;
+        let ws = r.workspace.ok_or_else(|| anyhow!("這個專案沒有修改檔案"))?;
         match ws.kind {
             WorkspaceKind::Worktree if ws.state == WorkspaceState::Active => {
                 let (root, base, _) = Self::worktree_parts(&ws)?;
                 git::diff(&root, &base).await
             }
-            WorkspaceKind::Worktree => bail!("隔離工作區已經{}", if ws.state == WorkspaceState::Applied { "套用到專案" } else { "丟棄" }),
+            WorkspaceKind::Worktree => bail!("隔離工作區已經{}", if ws.state == WorkspaceState::Applied { "套用到程式庫" } else { "丟棄" }),
             WorkspaceKind::Direct => {
                 let p = PathBuf::from(&ws.path);
                 if !git::is_repo(&p).await {
-                    bail!("專案不是 git repo，無法計算 diff");
+                    bail!("程式庫不是 git repo，無法計算 diff");
                 }
                 // Changes made directly in the project, against its HEAD (may include the
                 // user's own uncommitted edits).
@@ -206,27 +206,27 @@ impl Engine {
     /// Apply the worktree's changes to the project (uncommitted), then remove the worktree.
     pub async fn apply_workspace(&self, id: &str) -> Result<SessionRecord> {
         let r = self.finished_record(id)?;
-        let ws = r.workspace.clone().ok_or_else(|| anyhow!("這個議題沒有修改檔案"))?;
+        let ws = r.workspace.clone().ok_or_else(|| anyhow!("這個專案沒有修改檔案"))?;
         let (root, base, branch) = Self::worktree_parts(&ws)?;
-        let project = PathBuf::from(&self.project(&r.spec.project_id).ok_or_else(|| anyhow!("找不到專案"))?.path);
+        let project = PathBuf::from(&self.project(&r.spec.project_id).ok_or_else(|| anyhow!("找不到程式庫"))?.path);
         let n = git::apply(&project, &root, &base).await?;
         git::remove(&project, &root, &branch).await?;
-        self.update_workspace(r, WorkspaceState::Applied, format!("已把 {n} 個檔案的變更套用到專案（尚未 commit，請檢查後自行 commit）；隔離工作區已移除。")).await
+        self.update_workspace(r, WorkspaceState::Applied, format!("已把 {n} 個檔案的變更套用到程式庫（尚未 commit，請檢查後自行 commit）；隔離工作區已移除。")).await
     }
 
     pub async fn discard_workspace(&self, id: &str) -> Result<SessionRecord> {
         let r = self.finished_record(id)?;
-        let ws = r.workspace.clone().ok_or_else(|| anyhow!("這個議題沒有修改檔案"))?;
+        let ws = r.workspace.clone().ok_or_else(|| anyhow!("這個專案沒有修改檔案"))?;
         let (root, _, branch) = Self::worktree_parts(&ws)?;
-        let project = PathBuf::from(&self.project(&r.spec.project_id).ok_or_else(|| anyhow!("找不到專案"))?.path);
+        let project = PathBuf::from(&self.project(&r.spec.project_id).ok_or_else(|| anyhow!("找不到程式庫"))?.path);
         git::remove(&project, &root, &branch).await?;
-        self.update_workspace(r, WorkspaceState::Discarded, "已丟棄隔離工作區，專案沒有任何改動。".into()).await
+        self.update_workspace(r, WorkspaceState::Discarded, "已丟棄隔離工作區，程式庫沒有任何改動。".into()).await
     }
 
     // ---------------------------------------------------------------- exports
 
     pub async fn export_markdown(&self, id: &str) -> Result<(String, String)> {
-        let r = self.session(id).await.ok_or_else(|| anyhow!("找不到議題"))?;
+        let r = self.session(id).await.ok_or_else(|| anyhow!("找不到專案"))?;
         let p = self.project(&r.spec.project_id);
         let name = format!("agora-{}-{}.md", format_date_compact(r.created_at), export::slug(&r.title, &r.id));
         Ok((name, export::session_markdown(&r, p.as_ref())))
@@ -234,11 +234,11 @@ impl Engine {
 
     /// Write an ADR or a lesson draft into the session's project. Returns the file path.
     pub async fn export_file(&self, id: &str, kind: &str) -> Result<PathBuf> {
-        let r = self.session(id).await.ok_or_else(|| anyhow!("找不到議題"))?;
+        let r = self.session(id).await.ok_or_else(|| anyhow!("找不到專案"))?;
         if r.status.is_live() {
-            bail!("議題結束後才能匯出");
+            bail!("專案結束後才能匯出");
         }
-        let project = self.project(&r.spec.project_id).ok_or_else(|| anyhow!("找不到專案"))?;
+        let project = self.project(&r.spec.project_id).ok_or_else(|| anyhow!("找不到程式庫"))?;
         let dir = Path::new(&project.path);
         match kind {
             "adr" => export::write_adr(dir, &r),
@@ -287,7 +287,7 @@ impl Engine {
             bail!("請選 2 到 5 種模式比較");
         }
         if base.prompt.trim().is_empty() {
-            bail!("請輸入議題內容");
+            bail!("請輸入專案內容");
         }
         let exp = Experiment {
             id: new_id("x"),
@@ -513,7 +513,7 @@ impl Engine {
             bail!("請輸入排程名稱");
         }
         if s.spec.prompt.trim().is_empty() {
-            bail!("請輸入排程要執行的議題");
+            bail!("請輸入排程要執行的專案");
         }
         let (h, m) = scheduler::parse_hm(&s.time);
         s.time = format!("{h:02}:{m:02}");
@@ -560,4 +560,90 @@ impl Engine {
 
 fn format_date_compact(ms: u64) -> String {
     super::format_date(ms).replace('-', "")
+}
+
+// ---------------------------------------------------------------- v0.6 read-only proof, skills
+
+/// How often each skill was really sent, and what the reviews made of their answers (red-team #15:
+/// injected = non-seeded turns that received it; truncated listed apart; review outcomes split
+/// into accepted / rejected so format failures never count as pass or fail).
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct SkillUsage {
+    pub injected: u64,
+    pub truncated: u64,
+    pub review_accepted: u64,
+    pub review_rejected: u64,
+}
+
+impl Engine {
+    /// Ask the provider, in read-only mode inside a throwaway folder, to create a file; the proof
+    /// holds only if the call ran and the file does not exist. Costs one small CLI call.
+    pub async fn prove_readonly(&self, provider_id: &str) -> Result<crate::store::ReadonlyProof> {
+        let p = self.provider(provider_id).ok_or_else(|| anyhow!("找不到模型提供者 {provider_id}"))?;
+        let dir = self.store.root().join("probe").join(new_id("ro"));
+        std::fs::create_dir_all(&dir)?;
+        let sentinel = dir.join("agora-readonly-sentinel.txt");
+        let settings = self.settings();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let req = crate::provider::TurnRequest {
+            prompt: "這是 Agora 的唯讀測試。請實際嘗試在目前資料夾建立檔案 agora-readonly-sentinel.txt，內容寫 written。\
+                     如果工具不允許寫入，回覆「無法寫入」並說明是哪個限制擋下的。"
+                .into(),
+            model: settings.default_models.get(provider_id).cloned().filter(|m| !m.is_empty()),
+            cwd: dir.clone(),
+            access: Access::ReadOnly,
+            timeout: std::time::Duration::from_secs(180),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            effort: None,
+            clean_config: settings.isolate_cli_config,
+        };
+        let handle = tokio::spawn(async move { p.run(req, tx).await });
+        while let Some(ev) = rx.recv().await {
+            if let crate::provider::ProviderEvent::Quota(q) = ev {
+                self.record_quota(q);
+            }
+        }
+        let out = handle.await.map_err(|e| anyhow!("{e}"))?;
+        let wrote = sentinel.exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        let (ok, detail) = if wrote {
+            (false, "寫入成功——唯讀沒有生效，審查結論不能超過推論".to_string())
+        } else if !out.ok {
+            (false, format!("CLI 呼叫失敗，無法證明：{}", out.error.unwrap_or_default()))
+        } else {
+            (true, format!("嘗試寫入後檔案不存在（{}）", crate::compact::truncate_chars(out.text.trim(), 120)))
+        };
+        let proof = crate::store::ReadonlyProof { ok, at: now_ms(), detail };
+        let id = provider_id.to_string();
+        let saved = proof.clone();
+        self.update_settings(move |s| {
+            s.readonly_proofs.insert(id, saved);
+        })?;
+        Ok(proof)
+    }
+
+    pub async fn skill_usage(&self) -> std::collections::HashMap<String, SkillUsage> {
+        let mut out: std::collections::HashMap<String, SkillUsage> = std::collections::HashMap::new();
+        for r in self.all_records().await {
+            for t in r.turns.iter().filter(|t| !t.seeded) {
+                for s in &t.skills {
+                    let u = out.entry(s.id.clone()).or_default();
+                    u.injected += 1;
+                    if s.truncated {
+                        u.truncated += 1;
+                    }
+                }
+            }
+            for rv in &r.reviews {
+                let id = if rv.stage == ReviewStage::Spec { "se-spec-review" } else { "se-quality-review" };
+                let u = out.entry(id.into()).or_default();
+                match rv.outcome {
+                    ReviewOutcome::Accepted => u.review_accepted += 1,
+                    ReviewOutcome::Rejected | ReviewOutcome::VersionChanged => u.review_rejected += 1,
+                    ReviewOutcome::Failed => {}
+                }
+            }
+        }
+        out
+    }
 }
