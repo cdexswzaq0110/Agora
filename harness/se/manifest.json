@@ -1,16 +1,20 @@
 {
   "schema_version": 1,
-  "bundle_version": "2.0.0",
+  "bundle_version": "2.1.0",
   "source_repo": "https://github.com/cdexswzaq0110/Serendipity-Epiphany.git",
-  "source_commit": "91f76d6faceccd1b84c637e580c2282001530cea",
+  "source_commit": "56b817aeb106f0c013948e3a4e099e92e5f9544e",
   "files": [
+    {
+      "path": "extended/se-acquire/SKILL.md",
+      "sha256": "97668de849641289ea9149a6f966ff41ee2b96ed5f37c0bfce13016733ae2e1a"
+    },
     {
       "path": "extended/se-bootstrap/SKILL.md",
       "sha256": "9e527839991d460a8c3770dc06c06cb7f07b69c06c33c85b393c51fc5367fe72"
     },
     {
       "path": "extended/se-branch-lifecycle/SKILL.md",
-      "sha256": "cb265cfd4e24d03cab1b6b6a747b1d1e00047f37d9884b28cae8668c5fd4b081"
+      "sha256": "8f944d4cedffc73f834cfc36e0d18fd32d87992e9516591976f9a217899ba9e7"
     },
     {
       "path": "extended/se-clarify/SKILL.md",
@@ -21,10 +25,6 @@
       "sha256": "8d1afad8478ed9dafb24ef8f322b03e899edc0672d460c1cba91868c5d26a0bb"
     },
     {
-      "path": "extended/se-debug/SKILL.md",
-      "sha256": "03d33bd651fcab09ce572b0486c7b5c2ce23a0dbbeb94b4f18ff405ca42abd57"
-    },
-    {
       "path": "extended/se-design/SKILL.md",
       "sha256": "fa93b7bdba5b0ee560f4bd5c1f9707371e0fc6331b4cb91dd6ff9b2facbde698"
     },
@@ -33,20 +33,20 @@
       "sha256": "ac6991009f8796a22a72f851211abba1b91313f1a0763c6fdfba2831177551b8"
     },
     {
-      "path": "extended/se-epiphany/SKILL.md",
-      "sha256": "7dabb42fc36b5c6575094fde500150686c596aaae86857f497ecb4491cf29d64"
+      "path": "extended/se-epiphany/references/promotion-gates.md",
+      "sha256": "3fedf87046aab7effe4040ef6ed66983abfcfa362ce4eb7acdc74cc33d7cf8ba"
     },
     {
-      "path": "extended/se-feasibility/SKILL.md",
-      "sha256": "a1fbb3a648cc234e49f69e31e07a5cfa80f169f88f0e3fc1be122d3d77fa93dd"
+      "path": "extended/se-epiphany/references/purge.md",
+      "sha256": "8bb6e53eab82587fb6f17bbdfcc92b0d82f630a9493925496e2f54c1825b1e76"
+    },
+    {
+      "path": "extended/se-epiphany/SKILL.md",
+      "sha256": "63d7c199f0d5bf715497f77304743d3bfacae86b86b19f80232b49cb350aa5dd"
     },
     {
       "path": "extended/se-focus/SKILL.md",
       "sha256": "03420e4c2dcf72b22edb317be95b7425ef6850cf88f14909ce0337ba3c620a69"
-    },
-    {
-      "path": "extended/se-minimal-change/SKILL.md",
-      "sha256": "e5b7ce4eb1291cc44013a6e682e06712094612252d4f4d3f6cb3ab644ba3e313"
     },
     {
       "path": "extended/se-ml-lifecycle/references/data-and-split.md",
@@ -54,7 +54,7 @@
     },
     {
       "path": "extended/se-ml-lifecycle/references/delivery-and-ops.md",
-      "sha256": "f5e1ae348cc4116559b1d14e89811d07080953b066c2aa4b5ad61205db0b3c2a"
+      "sha256": "8dfed7e50d5ab005687ca2b9ad2cf544f0759723fc2d1d9f294e1ae69c84a32c"
     },
     {
       "path": "extended/se-ml-lifecycle/references/interpretability.md",
@@ -77,12 +77,20 @@
       "sha256": "89aa471003d66c179e25e2d94e5912b6537893f3eabc012647d6966a4c5c483d"
     },
     {
+      "path": "extended/se-resume/SKILL.md",
+      "sha256": "f9b13a8183f89b82936812034d218b425c01ac6695cb463bf7a7b033ae8be099"
+    },
+    {
       "path": "extended/se-scheduling/references/dispatch-contracts.md",
-      "sha256": "862f381a89eff76c7abd9d065a9c8c6e5a49849b931572f584d33320fa3bb9e8"
+      "sha256": "4b83be09b856638ae5cb12ea6da2988ae746133a247dbbb767aea4584e30a745"
+    },
+    {
+      "path": "extended/se-scheduling/references/verification-surfaces.md",
+      "sha256": "8bf43ec7d42b603f3cd0712f0bbfa81a95585fb595be3f03f8cf564278bf51bf"
     },
     {
       "path": "extended/se-scheduling/SKILL.md",
-      "sha256": "60c476554d2f22fcaa9dd3e3a5567165bc8ecca84d8738adf29809531e3e40de"
+      "sha256": "c3163e9f0322d345c5bae07ac14ad2f9d7bd3594c9f50d466e936adf773c8597"
     },
     {
       "path": "extended/se-sdlc/SKILL.md",
@@ -90,7 +98,7 @@
     },
     {
       "path": "extended/se-skill-authoring/SKILL.md",
-      "sha256": "c43f7c11c155f5688b0ec55f59144c7a464501f9fd02b36cec1db9457010a286"
+      "sha256": "dc904f34a2ec9217199807809829801699060c4b558db9b1b73ca9ce08d55a0f"
     },
     {
       "path": "extended/se-system-design/references/data-layer.md",
@@ -121,28 +129,36 @@
       "sha256": "94adc005d3fe0a72ba07821c4aa342314709bf6cae7b9ac6effd8e3c1b642020"
     },
     {
-      "path": "extended/se-two-axis-review/references/smell-baseline.md",
-      "sha256": "0743b9ea5655f54895703fafc1c35ed1a5c7adadda9973c47ebc72814aef1ed1"
-    },
-    {
-      "path": "extended/se-two-axis-review/SKILL.md",
-      "sha256": "1958afc8b2c5e753b91eff04bae44d2ca51525bd257475e10636a46176b94cec"
+      "path": "extended/superseded.json",
+      "sha256": "b0504d02819c6eadae8dc330460501c9a1b7b900f6e65fae4e909dd04269adff"
     },
     {
       "path": "INDEX.md",
-      "sha256": "b2715e0ebda96dee98595adb49415b2250f430d796b2481453a9cde7950ba3d0"
+      "sha256": "b93a21dc4b03e2230946e143c8aeb814a184b3dc904948281bd9b9518709d09e"
+    },
+    {
+      "path": "se-debug/references/v1-debug.md",
+      "sha256": "4bc736eeb2ee1cb4b293a20bfd7c541737288722f7db94a6bc2ec9d23a869011"
     },
     {
       "path": "se-debug/SKILL.md",
-      "sha256": "5367d42771cd4e1ecb50d1573028a15ddaabc9736b70e5ea59dca8e2952d95ab"
+      "sha256": "2a2caa3f121830a16666ddfaf54b918e59cdf0286ae476306d86d1646b04c7e6"
+    },
+    {
+      "path": "se-feasibility/references/v1-feasibility.md",
+      "sha256": "65d0f985a9576a6713e3c48ac6d8a576c21ba668c81c9fe20e68b02cc5d6edcf"
     },
     {
       "path": "se-feasibility/SKILL.md",
-      "sha256": "1a2326a311bb6e62217cf694cd064c9a044e7cc222db295e8aacd93fa862e9b2"
+      "sha256": "fa55d178a6af01f37302a0f83ac4e4e7262c7f9db2485ea2e86344df626b4b98"
+    },
+    {
+      "path": "se-minimal-implementation/references/minimal-change.md",
+      "sha256": "5fc607fd591901580a0954c13f9a744cff8923f68a3ef2c0fc03f11720579239"
     },
     {
       "path": "se-minimal-implementation/SKILL.md",
-      "sha256": "92f05df6fe68baa127dac0be5cea263c1b40de1d84964f4b75857abee4d1444d"
+      "sha256": "cb348489b3472caab7afe37dbb04508822573621a569a21997920938c2cd8572"
     },
     {
       "path": "se-problem-definition/SKILL.md",
@@ -158,11 +174,15 @@
     },
     {
       "path": "se-quality-review/SKILL.md",
-      "sha256": "683e847b85cf059115a0f0d490031002564489ef5f748dee7f807e6f99b06b87"
+      "sha256": "4387dbc6b06caa22fb148783c93f67e13bb125d2334a07a659db07c6f3f00ca7"
+    },
+    {
+      "path": "se-spec-review/references/two-axis-review.md",
+      "sha256": "609f63a1517d24601e4a145a211effd9dabe6637144a24cbf20b03acf322daba"
     },
     {
       "path": "se-spec-review/SKILL.md",
-      "sha256": "37f432b612ca216b87052b72ac4428b24fead08656d06b28edf0118c39f71355"
+      "sha256": "6b94b98ec7640237d6a6e7353efa1cf60f5cc8d4a012e287d387161a1858a789"
     },
     {
       "path": "se-technical-design/references/data-layer.md",
@@ -194,11 +214,11 @@
     },
     {
       "path": "se-work-order/SKILL.md",
-      "sha256": "1af6c19226d87f5c38d7cb391cdc05162448780d2e43c7085de7d1a254e9bea8"
+      "sha256": "a5e21c011a90555ec3a433ad15f646aec09619030da28ce73ef0cc611879a68a"
     },
     {
       "path": "VERSION",
-      "sha256": "c28fcca53637bc88e124af1725df13cb98c69dedefd62fb3cdbe1cdb6b760624"
+      "sha256": "c89b87c262e9d5ffd20e73aac74a1772adcc9f5a21682cc33adcf5086e5fef5c"
     }
   ]
 }

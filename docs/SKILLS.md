@@ -1,6 +1,6 @@
 # Skill 使用說明
 
-Agora 用的 skill 來自 [Serendipity-Epiphany](https://github.com/cdexswzaq0110/Serendipity-Epiphany) v2.0.0（Agent Skills 標準格式）。同一份 skill 用在三個地方：
+Agora 用的 skill 來自 [Serendipity-Epiphany](https://github.com/cdexswzaq0110/Serendipity-Epiphany) v2.1.0（Agent Skills 標準格式）。同一份 skill 用在三個地方：
 
 | 在哪裡 | 怎麼用 | 你要做什麼 |
 |---|---|---|
@@ -44,8 +44,8 @@ Agora 用的 skill 來自 [Serendipity-Epiphany](https://github.com/cdexswzaq011
 
 **限制**
 
-- 每個 skill 最多放 4,000 字進提示詞，`references/` 這一版不放。
-- 延伸 skill（`extended/` 裡的 18 個）**不會自動帶入**。
+- 每個 skill 最多放 4,000 字進提示詞，`references/` 這一版不放。核心 skill 的完整做法（例如 `se-minimal-implementation` 的 `DEBT:` 標記與過度工程審查、`se-spec-review` 的雙軸審查流程）都在 `references/` 裡，Claude Code 需要時才讀。
+- 延伸 skill（`extended/` 裡的 16 個）**不會自動帶入**。
 
 **出問題時**：Skills 頁出現「已停用」，代表那個 skill 的檔案和 manifest 的 hash 對不上。其他 skill 照常運作，但請截圖回報。
 
@@ -69,11 +69,11 @@ Agora 用的 skill 來自 [Serendipity-Epiphany](https://github.com/cdexswzaq011
 
 Agora 還沒有「把 harness 裝進你的程式庫」的功能（列在 [ROADMAP](../ROADMAP.md)），目前要手動安裝。
 
-**Claude Code**：在 Serendipity-Epiphany 的 repo 裡執行。bundle 會包含 extended。
+**Claude Code**：在 Serendipity-Epiphany 的 repo 裡執行。一定要加 `--layout flat`：Claude Code 只在 `.claude/skills/<name>/` 這一層找 skill，flat 會把延伸 skill 也放到這一層（同名時核心優先）。
 
 ```bash
 python scripts/sync_skills.py build --out <bundle 資料夾>
-python scripts/sync_skills.py install --bundle <bundle 資料夾> --dest <你的程式庫>/.claude/skills
+python scripts/sync_skills.py install --bundle <bundle 資料夾> --dest <你的程式庫>/.claude/skills --layout flat
 ```
 
 **Codex**：在 [Serendipity-Epiphany-Codex](https://github.com/cdexswzaq0110/Serendipity-Epiphany-Codex) 的 repo 裡執行。會裝 9 個核心 skill，加上 Codex 專屬的 4 個（kernel、memory、recover、git）；要 extended 時加 `--with-extended`。
@@ -91,6 +91,7 @@ python scripts/sync_skills.py install --bundle <bundle 資料夾> --dest <你的
 1. 在 Serendipity-Epiphany 改 `skills/` 並 commit。
 2. `build` 產生新的 bundle。
 3. 執行 `install`，並寫明 `--dest`：
-   - Agora 用 `--dest <Agora>/harness/se`；
+   - Agora 用 `--dest <Agora>/harness/se`（預設的 bundle 版面）；
+   - Claude Code 用 `--dest .claude/skills --layout flat`；
    - Serendipity-Epiphany-Codex 用 `--dest .agents/skills`。
 4. Agora 要重新編譯，因為 skill 是編譯時嵌進程式裡的。
